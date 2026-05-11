@@ -1,0 +1,87 @@
+# LP-HCL Phase 2 on 1/4 of stage_cpt_v1, one full epoch.
+#
+# Mirrors full_cpt/configs/full_cpt_v1_quarter.yaml in spirit:
+#   - 2 GPUs, flash-attention 2, bf16
+#   - LoRA r=8 on (q_proj, v_proj)
+#   - eval every 0.25 epoch, save every 0.05 epoch
+#   - per-pair-kind weighting biases the loss slightly toward "swapped"
+#     negatives (hardest case) without overpowering positives
+#
+# To swap base model: change `model.name` to any other key in
+# `model_training/model_path.json`, and update `phase1_adapter_path` to that
+# model's Phase 1 LoRA final_model directory (or remove it to skip Phase 1).
+
+run:
+  output_root: ${AGENTSKILLS_PREPARED_ROOT:-./inputs}/runs
+  run_name: lp_hcl_q025_2gpu_fa2
+  experiment_name: lp_hcl_v1_q025_2gpu_fa2
+  seed: 42
+  log_level: INFO
+  auto_resume: true
+  resume_from_checkpoint: null
+  train_eval_at_epoch_end: false
+
+data:
+  train_file: ${AGENTSKILLS_PREPARED_ROOT:-./inputs}/stage_cpt/stage_cpt_v1/pairs_train.parquet
+  validation_file: ${AGENTSKILLS_PREPARED_ROOT:-./inputs}/stage_cpt/stage_cpt_v1/pairs_val.parquet
+  test_file: ${AGENTSKILLS_PREPARED_ROOT:-./inputs}/stage_cpt/stage_cpt_v1/pairs_test.parquet
+  anchor_column: anchor_text
+  pair_column: pair_text
+  label_column: label
+  pair_kind_column: pair_kind
+  anchor_stage_column: anchor_stage
+  pair_stage_column: pair_stage
+  # data-prep caps stage texts at 16K chars (~4K tokens at p99). 1024 captures
+  # most rows in full while keeping the per-pair forward affordable on 2 GPUs.
+  max_seq_length: 1024
+  preprocessing_num_workers: 8
+  # Fractions are in row-counts of the raw parquet; ~1/4 of each split.
+  # Pair counts (full): train≈1.50M, val≈83K, test≈83K → 1/4: ~376K / ~21K / ~21K.
+  train_fraction: 0.25
+  validation_fraction: 0.25
+  test_fraction: 0.25
+
+model:
+  name: Foundation-Sec-8B-Reasoning
+  phase1_adapter_path: ${AGENTSKILLS_PHASE1_ADAPTER:-./outputs/phase1/final_model}
+  merge_phase1_adapter: true
+  tokenizer_name_or_path: null
+  trust_remote_code: false
+  attn_implementation: flash_attention_2
+  torch_dtype: bfloat16
+  gradient_checkpointing: true
+  use_lora: true
+  lora:
+    r: 8
+    alpha: 16
+    dropout: 0.05
+    bias: none
+    target_modules: [q_proj, v_proj]
+  # NOTE: do not enable model.quantization here — merge_and_unload of the
+  # Phase 1 adapter requires unquantized base weights. If you must quantize,
+  # drop `phase1_adapter_path` (start from the raw base instead).
+  hcl:
+    pooling: last_token
+    proj_dim: null
+    init_temperature: 0.07
+    pair_kind_weights: [1.0, 1.0, 1.5]   # weight "swapped" hardest-negatives
+    ce_loss_weight: 0.0
+
+training:
+  num_train_epochs: 1
+  per_device_train_batch_size: 4
+  per_device_eval_batch_size: 8
+  gradient_accumulation_steps: 4
+  learning_rate: 2.0e-4
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.03
+  weight_decay: 0.0
+  bf16: true
+  logging_steps: 20
+  eval_fraction_of_epoch: 0.25
+  save_fraction_of_epoch: 0.05
+  save_total_limit: 6
+  report_to: [tensorboard]
+  dataloader_num_workers: 2
+  remove_unused_columns: false
+  ddp_find_unused_parameters: false

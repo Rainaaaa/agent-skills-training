@@ -1,0 +1,90 @@
+# Phase 2 / Hierarchical Contrastive Learning — smoke-test config.
+#
+# String values support ${VAR:-default} env-var interpolation.
+#
+# Defaults favor a quick smoke-test:
+#   - LoRA on (q_proj, v_proj), rank 8
+#   - 1 epoch, per-device batch 4, grad-accum 4
+#   - max_seq_length 1024 (anchor and pair are tokenized independently)
+#   - bf16 + gradient checkpointing
+#   - training.max_steps=100 caps the first run; remove for full pass
+#
+# Smoke run:
+#   python -m stages.hcl.train --config stages/hcl/configs/example.yaml \
+#       training.max_steps=50
+
+run:
+  output_root: "${AGENTSKILLS_TRAIN_OUTPUT_ROOT:-./outputs/runs}"
+  run_name: lp_hcl_smoketest
+  experiment_name: lp_hcl_smoketest
+  seed: 42
+  log_level: INFO
+  auto_resume: true
+  resume_from_checkpoint: null
+  train_eval_at_epoch_end: false
+
+data:
+  # Phase 2 contrastive pair outputs from agent-skills-preparation
+  # (build_phase2_hcl produces pl_hcl/<v>/ pairs).
+  train_file:      "${AGENTSKILLS_HCL_TRAIN:-./inputs/pl_hcl/pairs_train.parquet}"
+  validation_file: "${AGENTSKILLS_HCL_VAL:-./inputs/pl_hcl/pairs_val.parquet}"
+  test_file:       "${AGENTSKILLS_HCL_TEST:-./inputs/pl_hcl/pairs_test.parquet}"
+  anchor_column: anchor_text
+  pair_column: pair_text
+  label_column: label
+  pair_kind_column: pair_kind
+  anchor_stage_column: anchor_stage
+  pair_stage_column: pair_stage
+  max_seq_length: 1024
+  preprocessing_num_workers: 8
+  max_train_rows: 4000        # remove for full runs
+  max_validation_rows: 500
+  max_test_rows: 500
+
+model:
+  name: "${AGENTSKILLS_BACKBONE:-Foundation-Sec-8B-Reasoning}"
+  # Chain on top of a Phase 1 LoRA: the adapter is loaded in eval mode and
+  # merged into the base via merge_and_unload before the fresh Phase 2 LoRA
+  # is attached. Drop this key to start from the raw registry-resolved base.
+  phase1_adapter_path: "${AGENTSKILLS_PHASE1_ADAPTER:-}"
+  merge_phase1_adapter: true
+  tokenizer_name_or_path: null
+  trust_remote_code: false
+  attn_implementation: sdpa
+  torch_dtype: bfloat16
+  gradient_checkpointing: true
+  use_lora: true
+  lora:
+    r: 8
+    alpha: 16
+    dropout: 0.05
+    bias: none
+    target_modules: [q_proj, v_proj]
+  hcl:
+    pooling: last_token              # or "mean"
+    proj_dim: null                   # null = no projection (use raw hidden state)
+    init_temperature: 0.07
+    pair_kind_weights: [1.0, 1.0, 1.0]   # [positive, corrupted, swapped]
+    ce_loss_weight: 0.0              # set >0 to add an in-batch InfoNCE term
+
+training:
+  num_train_epochs: 1
+  per_device_train_batch_size: 4
+  per_device_eval_batch_size: 8
+  gradient_accumulation_steps: 4
+  learning_rate: 2.0e-4
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.03
+  weight_decay: 0.0
+  bf16: true
+  logging_steps: 20
+  eval_strategy: steps
+  eval_steps: 100
+  save_strategy: steps
+  save_steps: 100
+  save_total_limit: 2
+  report_to: [tensorboard]
+  dataloader_num_workers: 2
+  remove_unused_columns: false
+  ddp_find_unused_parameters: false
+  max_steps: 100       # REMOVE for a real 1-epoch run

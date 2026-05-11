@@ -1,0 +1,34 @@
+# agent-skills-training runtime deps.
+#
+# Versions pinned to a known-good window that matches the BR200 IU cluster
+# (CUDA 12.x driver, PyTorch 2.1+). Adjust if your GPU host has a different
+# CUDA. For pure inference, omit `bitsandbytes` (it's heavy and unnecessary
+# without 4/8-bit quantization).
+
+# Core
+PyYAML>=6.0,<7
+pyarrow>=14.0,<22
+
+# HF stack
+transformers>=4.40,<4.50
+datasets>=2.18,<4
+accelerate>=0.30,<2
+peft>=0.10,<1
+sentencepiece>=0.2,<1
+safetensors>=0.4,<1
+tokenizers>=0.19,<1
+
+# TensorBoard for trainer.report_to
+tensorboard>=2.16,<3
+
+# PyTorch — pin via the CUDA-matched wheel index; the Dockerfile uses the
+# `pytorch/pytorch:2.3.0-cuda12.1-cudnn8-runtime` base which ships torch
+# pre-installed, so this line is a NO-OP inside the image. Listed for
+# local installs (`pip install -r requirements.txt`).
+# torch>=2.1,<3
+
+# Optional — uncomment if you need 4-bit / 8-bit base weights
+# bitsandbytes>=0.43,<0.45
+
+# Optional — flash-attention 2 (rebuild against your CUDA)
+# flash-attn>=2.5,<3

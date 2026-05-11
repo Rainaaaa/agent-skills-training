@@ -1,0 +1,75 @@
+# Six named services — same image, different default args.
+#
+#   docker compose build
+#   docker compose run --rm pretraining --config stages/pretraining/configs/example.yaml
+#   docker compose run --rm hcl         --config stages/hcl/configs/example.yaml
+#   docker compose run --rm sft-mal     --config stages/downstream/configs/sft_malicious_example.yaml
+#   docker compose run --rm sft-align   --config stages/downstream/configs/sft_misalignment_example.yaml
+#   docker compose run --rm inference   --config stages/downstream/configs/inference_example.yaml
+#   docker compose run --rm baseline    --config stages/downstream/configs/eval_baseline_example.yaml
+#
+# Override host paths with env vars (set in your shell or a .env file):
+#   AGENTSKILLS_DATA_HOST=/path/to/datasets
+#   AGENTSKILLS_OUTPUTS_HOST=/path/to/training_outputs
+#   AGENTSKILLS_MODELS_HOST=/path/to/hf_models_cache         (optional)
+
+services:
+  base: &base
+    image: agent-skills-training:latest
+    build: .
+    # GPU access — requires the NVIDIA container toolkit on the host.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      # These are forwarded into the configs via ${VAR:-default} interpolation.
+      AGENTSKILLS_TRAIN_OUTPUT_ROOT: "${AGENTSKILLS_TRAIN_OUTPUT_ROOT:-/app/outputs/runs}"
+      AGENTSKILLS_FULL_CPT_TRAIN:    "${AGENTSKILLS_FULL_CPT_TRAIN:-/data/full_cpt/train.parquet}"
+      AGENTSKILLS_FULL_CPT_VAL:      "${AGENTSKILLS_FULL_CPT_VAL:-/data/full_cpt/val.parquet}"
+      AGENTSKILLS_FULL_CPT_TEST:     "${AGENTSKILLS_FULL_CPT_TEST:-/data/full_cpt/test.parquet}"
+      AGENTSKILLS_HCL_TRAIN:         "${AGENTSKILLS_HCL_TRAIN:-/data/pl_hcl/pairs_train.parquet}"
+      AGENTSKILLS_HCL_VAL:           "${AGENTSKILLS_HCL_VAL:-/data/pl_hcl/pairs_val.parquet}"
+      AGENTSKILLS_HCL_TEST:          "${AGENTSKILLS_HCL_TEST:-/data/pl_hcl/pairs_test.parquet}"
+      AGENTSKILLS_PHASE1_ADAPTER:    "${AGENTSKILLS_PHASE1_ADAPTER:-}"
+      AGENTSKILLS_PHASE2_ADAPTER:    "${AGENTSKILLS_PHASE2_ADAPTER:-}"
+      AGENTSKILLS_SFT_ADAPTER:       "${AGENTSKILLS_SFT_ADAPTER:-}"
+      AGENTSKILLS_BACKBONE:          "${AGENTSKILLS_BACKBONE:-Foundation-Sec-8B-Reasoning}"
+    volumes:
+      - ${AGENTSKILLS_DATA_HOST:-./inputs}:/data:ro
+      - ${AGENTSKILLS_OUTPUTS_HOST:-./outputs}:/app/outputs
+      # Bind a real model_path.json over the image default if you have one.
+      - ./model_path.json:/app/model_path.json:ro
+      # Cache HF models in a host dir so they survive container restarts.
+      - ${AGENTSKILLS_MODELS_HOST:-./outputs/hf_cache}:/app/outputs/hf_cache
+
+  pretraining:
+    <<: *base
+    command: ["stages/pretraining/train.py", "--config", "stages/pretraining/configs/example.yaml"]
+
+  hcl:
+    <<: *base
+    command: ["stages/hcl/train.py", "--config", "stages/hcl/configs/example.yaml"]
+
+  sft-mal:
+    <<: *base
+    command: ["stages/downstream/sft/train.py",
+              "--config", "stages/downstream/configs/sft_malicious_example.yaml"]
+
+  sft-align:
+    <<: *base
+    command: ["stages/downstream/sft/train.py",
+              "--config", "stages/downstream/configs/sft_misalignment_example.yaml"]
+
+  inference:
+    <<: *base
+    command: ["stages/downstream/inference.py",
+              "--config", "stages/downstream/configs/inference_example.yaml"]
+
+  baseline:
+    <<: *base
+    command: ["stages/downstream/eval_baseline.py",
+              "--config", "stages/downstream/configs/eval_baseline_example.yaml"]

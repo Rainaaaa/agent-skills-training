@@ -1,0 +1,80 @@
+# Full CPT on 1/4 of Phase 1, one full epoch.
+#
+# This config = 8-bit QLoRA + flash-attention 2 on 2 GPUs. 8-bit alone is
+# usually neutral or slightly slower than bf16 on Ampere/Hopper int8 kernels;
+# the wall-clock win comes from flash-attn 2. We keep gradient checkpointing
+# ON for safety this first run; if the run is stable, flipping it OFF will
+# claw back another ~30%.
+#
+# To swap base model: change `model.name` to any other key in
+# `model_training/model_path.json`. Output goes to
+#   <run.output_root>/<model.name>/<run.run_name>/
+
+run:
+  output_root: ${AGENTSKILLS_PREPARED_ROOT:-./inputs}/runs
+  run_name: qlora8_q025_2gpu_fa2_seq4k
+  experiment_name: full_cpt_v1_qlora8_q025_2gpu_fa2_seq4k
+  seed: 42
+  log_level: INFO
+  auto_resume: true
+  resume_from_checkpoint: null
+  train_eval_at_epoch_end: false
+
+data:
+  train_file: ${AGENTSKILLS_PREPARED_ROOT:-./inputs}/full_cpt/full_cpt_v1/train.parquet
+  validation_file: ${AGENTSKILLS_PREPARED_ROOT:-./inputs}/full_cpt/full_cpt_v1/val.parquet
+  test_file: ${AGENTSKILLS_PREPARED_ROOT:-./inputs}/full_cpt/full_cpt_v1/test.parquet
+  text_column: text
+  line_by_line: false
+  # Phase 1 views are capped at 16K chars upstream (~4K tokens at p99); 4096
+  # captures every view in full. Higher would only help if data-prep's
+  # max_phase1_view_chars is raised and Phase 1 is rebuilt.
+  max_seq_length: 4096
+  preprocessing_num_workers: 8
+  # Fractions are in row-counts of the raw parquet; ~1/4 of each split.
+  # Result: train ≈ 492K rows, val ≈ 27K rows, test ≈ 26.5K rows.
+  train_fraction: 0.25
+  validation_fraction: 0.25
+  test_fraction: 0.25
+  # Absolute caps left empty — the fractions above govern eval cost.
+  # max_validation_rows: ...
+  # max_test_rows: ...
+
+model:
+  name: Foundation-Sec-8B-Reasoning
+  tokenizer_name_or_path: null
+  trust_remote_code: false
+  attn_implementation: flash_attention_2
+  torch_dtype: bfloat16
+  gradient_checkpointing: true
+  use_lora: true
+  lora:
+    r: 8
+    alpha: 16
+    dropout: 0.05
+    bias: none
+    target_modules: [q_proj, v_proj]
+  # 8-bit (LLM.int8()) quantization of base weights. LoRA adapters stay bf16.
+  # In DDP (WORLD_SIZE>1) the modeling.py loader auto-sets device_map={"":LOCAL_RANK}
+  # so each rank gets its own int8 replica.
+  quantization:
+    load_in_8bit: true
+
+training:
+  num_train_epochs: 1
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 4
+  learning_rate: 2.0e-4
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.03
+  weight_decay: 0.0
+  bf16: true
+  logging_steps: 20
+  eval_fraction_of_epoch: 0.25
+  save_fraction_of_epoch: 0.05
+  save_total_limit: 6
+  report_to: [tensorboard]
+  dataloader_num_workers: 2
+  remove_unused_columns: false
+  ddp_find_unused_parameters: false

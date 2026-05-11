@@ -1,0 +1,38 @@
+# Downstream inference — batch predict with classification metrics.
+#
+# Loads a (possibly LoRA-adapted) backbone, walks the test parquet, runs
+# constrained scoring of the response vocab, and emits:
+#   outputs/.../predictions_<task>.jsonl    (one row per skill)
+#   outputs/.../metrics_<task>.json         (accuracy / precision / recall / F1)
+
+run:
+  output_root: "${AGENTSKILLS_TRAIN_OUTPUT_ROOT:-./outputs/runs}"
+  run_name: infer_smoketest
+  log_level: INFO
+
+data:
+  task: malicious_detection
+  test_file: "${AGENTSKILLS_INFER_TEST:-./inputs/sft/malicious/test.parquet}"
+  max_rows: 200       # smoke-test cap; 0 = all rows
+
+model:
+  name: "${AGENTSKILLS_BACKBONE:-Foundation-Sec-8B-Reasoning}"
+  # Required: the trained SFT adapter (LoRA dir written by sft.train.py).
+  # Leave empty to score the raw backbone (sanity baseline; expect chance F1).
+  adapter_path: "${AGENTSKILLS_SFT_ADAPTER:-}"
+  tokenizer_name_or_path: null
+  trust_remote_code: false
+  attn_implementation: sdpa
+  torch_dtype: bfloat16
+
+inference:
+  batch_size: 8              # currently scored one at a time; kept for future batching
+  max_new_tokens: 8
+  # constrain_vocab=true scores each response in task.response_vocab and
+  # picks argmax (recommended for one-word answers — no decoder noise).
+  # false uses free-form greedy generation and substring-matches the output.
+  constrain_vocab: true
+
+output:
+  predictions_jsonl: "${AGENTSKILLS_INFER_PREDS:-}"   # default: <output_dir>/predictions_<task>.jsonl
+  metrics_json:      "${AGENTSKILLS_INFER_METRICS:-}" # default: <output_dir>/metrics_<task>.json

@@ -1,0 +1,79 @@
+# Pretraining (Phase 1) — smoke-test config.
+#
+# String values support ${VAR:-default} env-var interpolation. Set the
+# vars in your shell (or override via section.key=value on the CLI) and
+# this file works on any host without an edit.
+#
+# Defaults favor a quick smoke-test:
+#   - LoRA on (q_proj, v_proj), rank 8
+#   - 1 epoch, batch 1, grad-accum 8
+#   - max_seq_length 2048 with packing
+#   - bf16 + gradient checkpointing
+#   - training.max_steps=200 caps the first run; remove for full pass
+#
+# Smoke run:
+#   python -m stages.pretraining.train --config stages/pretraining/configs/example.yaml \
+#       training.max_steps=20
+
+run:
+  output_root: "${AGENTSKILLS_TRAIN_OUTPUT_ROOT:-./outputs/runs}"
+  run_name: lora_smoketest
+  experiment_name: full_cpt_lora_smoketest
+  seed: 42
+  log_level: INFO
+  auto_resume: true
+  resume_from_checkpoint: null
+  train_eval_at_epoch_end: false   # full-train eval is expensive; flip on for real runs
+
+data:
+  # Phase 1 outputs from agent-skills-preparation. Point env vars at the
+  # full_cpt version dir you want to train on.
+  train_file:      "${AGENTSKILLS_FULL_CPT_TRAIN:-./inputs/full_cpt/train.parquet}"
+  validation_file: "${AGENTSKILLS_FULL_CPT_VAL:-./inputs/full_cpt/val.parquet}"
+  test_file:       "${AGENTSKILLS_FULL_CPT_TEST:-./inputs/full_cpt/test.parquet}"
+  text_column: text
+  line_by_line: false
+  max_seq_length: 2048
+  preprocessing_num_workers: 8
+  max_train_rows: 20000        # remove for full runs
+  max_validation_rows: 500
+  max_test_rows: 500
+
+model:
+  # `name` is looked up in model_path.json; alternatively, set
+  # `model_name_or_path` to a local path / HF repo id (no registry lookup).
+  name: "${AGENTSKILLS_BACKBONE:-Foundation-Sec-8B-Reasoning}"
+  tokenizer_name_or_path: null
+  trust_remote_code: false
+  attn_implementation: sdpa          # switch to flash_attention_2 once flash-attn is installed
+  torch_dtype: bfloat16
+  gradient_checkpointing: true
+  use_lora: true
+  lora:
+    r: 8
+    alpha: 16
+    dropout: 0.05
+    bias: none
+    target_modules: [q_proj, v_proj]
+
+training:
+  num_train_epochs: 1
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 8
+  learning_rate: 2.0e-4
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.03
+  weight_decay: 0.0
+  bf16: true
+  logging_steps: 20
+  eval_strategy: steps
+  eval_steps: 200
+  save_strategy: steps
+  save_steps: 200
+  save_total_limit: 2
+  report_to: [tensorboard]
+  dataloader_num_workers: 2
+  remove_unused_columns: false
+  ddp_find_unused_parameters: false
+  max_steps: 200       # REMOVE for a real 1-epoch run

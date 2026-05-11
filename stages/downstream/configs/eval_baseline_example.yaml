@@ -1,0 +1,40 @@
+# Downstream baseline eval — CLM perplexity / bits-per-byte on the
+# pretraining test split. Useful as a sanity-check rule before claiming
+# the trained model is meaningfully better than the raw backbone.
+#
+# Run:
+#   python -m stages.downstream.eval_baseline \
+#       --config stages/downstream/configs/eval_baseline_example.yaml
+
+run:
+  output_root: "${AGENTSKILLS_TRAIN_OUTPUT_ROOT:-./outputs/runs}"
+  run_name: baseline_eval
+  seed: 42
+  log_level: INFO
+
+data:
+  train_file:      "${AGENTSKILLS_FULL_CPT_TRAIN:-./inputs/full_cpt/train.parquet}"
+  validation_file: "${AGENTSKILLS_FULL_CPT_VAL:-./inputs/full_cpt/val.parquet}"
+  test_file:       "${AGENTSKILLS_FULL_CPT_TEST:-./inputs/full_cpt/test.parquet}"
+  text_column: text
+  line_by_line: false
+  max_seq_length: 2048
+  preprocessing_num_workers: 4
+  max_test_rows: 1000
+
+model:
+  name: "${AGENTSKILLS_BACKBONE:-Foundation-Sec-8B-Reasoning}"
+  tokenizer_name_or_path: null
+  trust_remote_code: false
+  attn_implementation: sdpa
+  torch_dtype: bfloat16
+  gradient_checkpointing: false
+  use_lora: false
+
+training:
+  per_device_eval_batch_size: 1
+  bf16: true
+  report_to: []
+  dataloader_num_workers: 2
+  remove_unused_columns: false
+  ddp_find_unused_parameters: false

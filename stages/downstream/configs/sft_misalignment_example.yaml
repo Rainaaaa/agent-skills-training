@@ -1,0 +1,72 @@
+# Downstream SFT — binary alignment detection (generative Q&A).
+#
+# The trained model answers "aligned" or "misaligned" to a templated
+# prompt about each skill. Same backbone-loading + LoRA + auto-resume
+# machinery as the malicious-detection variant.
+#
+# String values support ${VAR:-default} env-var interpolation.
+
+run:
+  output_root: "${AGENTSKILLS_TRAIN_OUTPUT_ROOT:-./outputs/runs}"
+  run_name: sft_align_smoketest
+  seed: 42
+  log_level: INFO
+  auto_resume: true
+  resume_from_checkpoint: null
+
+data:
+  task: misalignment_detection
+  # Each row should have at minimum:
+  #   - skill_text         (or whatever task.input_column says)
+  #   - alignment_class    (the ALIGNED / MISALIGNED label from scanning
+  #                         or human-reviewed labels)
+  train_file:      "${AGENTSKILLS_SFT_ALIGN_TRAIN:-./inputs/sft/alignment/train.parquet}"
+  validation_file: "${AGENTSKILLS_SFT_ALIGN_VAL:-./inputs/sft/alignment/val.parquet}"
+  test_file:       "${AGENTSKILLS_SFT_ALIGN_TEST:-./inputs/sft/alignment/test.parquet}"
+  max_seq_length: 2048
+  preprocessing_num_workers: 4
+  balance_by_label: true
+  drop_no_label: true
+  max_train_rows: 4000
+  max_validation_rows: 500
+  max_test_rows: 500
+
+model:
+  name: "${AGENTSKILLS_BACKBONE:-Foundation-Sec-8B-Reasoning}"
+  phase1_adapter_path: "${AGENTSKILLS_PHASE1_ADAPTER:-}"
+  phase2_adapter_path: "${AGENTSKILLS_PHASE2_ADAPTER:-}"
+  merge_phase1_adapter: true
+  tokenizer_name_or_path: null
+  trust_remote_code: false
+  attn_implementation: sdpa
+  torch_dtype: bfloat16
+  gradient_checkpointing: true
+  use_lora: true
+  lora:
+    r: 8
+    alpha: 16
+    dropout: 0.05
+    bias: none
+    target_modules: [q_proj, v_proj]
+
+training:
+  num_train_epochs: 2
+  per_device_train_batch_size: 2
+  per_device_eval_batch_size: 2
+  gradient_accumulation_steps: 4
+  learning_rate: 1.0e-4
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.05
+  weight_decay: 0.0
+  bf16: true
+  logging_steps: 20
+  eval_strategy: steps
+  eval_steps: 100
+  save_strategy: steps
+  save_steps: 100
+  save_total_limit: 2
+  report_to: [tensorboard]
+  dataloader_num_workers: 2
+  remove_unused_columns: false
+  ddp_find_unused_parameters: false
+  max_steps: 200       # REMOVE for full runs
