@@ -120,8 +120,8 @@ def main() -> None:
 
     LOGGER.info("task=%s model=%s output=%s", task.name, model_path, output_dir)
 
-    tokenizer = load_tokenizer(model_cfg, model_path)
-    model = load_causal_lm(model_cfg, model_path, tokenizer)
+    tokenizer, num_added = load_tokenizer(model_cfg)
+    model = load_causal_lm(model_cfg, num_added)
     model = maybe_wrap_lora(model, model_cfg)
 
     ds = load_splits(data_cfg)
@@ -137,11 +137,36 @@ def main() -> None:
         drop_no_label=bool(data_cfg.get("drop_no_label", True)),
     )
 
+    eval_fraction = training_cfg.pop("eval_fraction_of_epoch", None)
+    save_fraction = training_cfg.pop("save_fraction_of_epoch", None)
+    import os as _os
+    world_size = max(int(_os.environ.get("WORLD_SIZE", "1")), 1)
+    per_device_batch = int(training_cfg.get("per_device_train_batch_size", 1))
+    grad_accum = int(training_cfg.get("gradient_accumulation_steps", 1))
+    if eval_fraction is not None and "train" in tokenized:
+        eval_steps, _ = compute_eval_steps_from_fraction(
+            fraction=float(eval_fraction),
+            n_train=len(tokenized["train"]),
+            per_device_batch=per_device_batch,
+            grad_accum=grad_accum,
+            world_size=world_size,
+        )
+        training_cfg["eval_strategy"] = "steps"
+        training_cfg["eval_steps"] = eval_steps
+        training_cfg["save_strategy"] = "steps"
+        training_cfg["save_steps"] = eval_steps
+    if save_fraction is not None and "train" in tokenized:
+        save_steps, _ = compute_eval_steps_from_fraction(
+            fraction=float(save_fraction),
+            n_train=len(tokenized["train"]),
+            per_device_batch=per_device_batch,
+            grad_accum=grad_accum,
+            world_size=world_size,
+        )
+        training_cfg["save_strategy"] = "steps"
+        training_cfg["save_steps"] = save_steps
+
     training_args = build_training_args(training_cfg, output_dir)
-    eval_steps_override = compute_eval_steps_from_fraction(training_cfg, tokenized.get("train"))
-    if eval_steps_override:
-        training_args.eval_steps = eval_steps_override
-        training_args.save_steps = eval_steps_override
 
     collator = _DropDataCollator(tokenizer)
 

@@ -37,6 +37,15 @@ services:
       AGENTSKILLS_PHASE1_ADAPTER:    "${AGENTSKILLS_PHASE1_ADAPTER:-}"
       AGENTSKILLS_PHASE2_ADAPTER:    "${AGENTSKILLS_PHASE2_ADAPTER:-}"
       AGENTSKILLS_SFT_ADAPTER:       "${AGENTSKILLS_SFT_ADAPTER:-}"
+      AGENTSKILLS_SFT_MAL_TRAIN:     "${AGENTSKILLS_SFT_MAL_TRAIN:-/data/sft/malicious/train.parquet}"
+      AGENTSKILLS_SFT_MAL_VAL:       "${AGENTSKILLS_SFT_MAL_VAL:-/data/sft/malicious/val.parquet}"
+      AGENTSKILLS_SFT_MAL_TEST:      "${AGENTSKILLS_SFT_MAL_TEST:-/data/sft/malicious/test.parquet}"
+      AGENTSKILLS_SFT_ALIGN_TRAIN:   "${AGENTSKILLS_SFT_ALIGN_TRAIN:-/data/sft/alignment/train.parquet}"
+      AGENTSKILLS_SFT_ALIGN_VAL:     "${AGENTSKILLS_SFT_ALIGN_VAL:-/data/sft/alignment/val.parquet}"
+      AGENTSKILLS_SFT_ALIGN_TEST:    "${AGENTSKILLS_SFT_ALIGN_TEST:-/data/sft/alignment/test.parquet}"
+      AGENTSKILLS_INFER_TEST:        "${AGENTSKILLS_INFER_TEST:-/data/sft/malicious/test.parquet}"
+      AGENTSKILLS_INFER_PREDS:       "${AGENTSKILLS_INFER_PREDS:-}"
+      AGENTSKILLS_INFER_METRICS:     "${AGENTSKILLS_INFER_METRICS:-}"
       AGENTSKILLS_BACKBONE:          "${AGENTSKILLS_BACKBONE:-Foundation-Sec-8B-Reasoning}"
     volumes:
       - ${AGENTSKILLS_DATA_HOST:-./inputs}:/data:ro

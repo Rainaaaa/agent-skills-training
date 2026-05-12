@@ -1,15 +1,42 @@
 {
   "GeneralLLMs": {
-    "Qwen3-8B": "/N/project/ai4chips/share_space/general_llm/Qwen/Qwen3-8B/models--Qwen--Qwen3-8B/snapshots/b968826d9c46dd6066d109eabc6255188de91218",
-    "DeepSeek-V4-Flash": "/N/project/ai4chips/share_space/general_llm/deepseek-ai/DeepSeek-V4-Flash/models--deepseek-ai--DeepSeek-V4-Flash/snapshots/0cad8ee349f4f2d669ef30552e3748bd7f8cfab5",
-    "gemma-4-E4B": "/N/project/ai4chips/share_space/general_llm/google/gemma-4-E4B-it/models--google--gemma-4-E4B-it/snapshots/83df0a889143b1dbfc61b591bbc639540fd9ce4c",
-    "llama3.1-8b": "/N/project/ai4chips/share_space/general_llm/meta-llama/Llama-3.1-8B-Instruct/models--meta-llama--Llama-3.1-8B-Instruct/snapshots/0e9e39f249a16976918f6564b8830bc894c89659",
-    "Qwen3.6-35B-A3B": "/N/project/ai4chips/share_space/general_llm/Qwen/Qwen3.6-35B-A3B/models--Qwen--Qwen3.6-35B-A3B/snapshots/995ad96eacd98c81ed38be0c5b274b04031597b0",
-    "gpt-oss-20b": "/N/project/ai4chips/share_space/general_llm/openai/gpt-oss-20b/models--openai--gpt-oss-20b/snapshots/6cee5e81ee83917806bbde320786a8fb61efebee"
+    "Qwen3-8B": {
+      "local": "/N/project/ai4chips/share_space/general_llm/Qwen/Qwen3-8B/models--Qwen--Qwen3-8B/snapshots/b968826d9c46dd6066d109eabc6255188de91218",
+      "hf": "Qwen/Qwen3-8B"
+    },
+    "DeepSeek-V4-Flash": {
+      "local": "/N/project/ai4chips/share_space/general_llm/deepseek-ai/DeepSeek-V4-Flash/models--deepseek-ai--DeepSeek-V4-Flash/snapshots/0cad8ee349f4f2d669ef30552e3748bd7f8cfab5",
+      "hf": "deepseek-ai/DeepSeek-V4-Flash"
+    },
+    "gemma-4-E4B": {
+      "local": "/N/project/ai4chips/share_space/general_llm/google/gemma-4-E4B-it/models--google--gemma-4-E4B-it/snapshots/83df0a889143b1dbfc61b591bbc639540fd9ce4c",
+      "hf": "google/gemma-4-E4B-it"
+    },
+    "llama3.1-8b": {
+      "local": "/N/project/ai4chips/share_space/general_llm/meta-llama/Llama-3.1-8B-Instruct/models--meta-llama--Llama-3.1-8B-Instruct/snapshots/0e9e39f249a16976918f6564b8830bc894c89659",
+      "hf": "meta-llama/Llama-3.1-8B-Instruct"
+    },
+    "Qwen3.6-35B-A3B": {
+      "local": "/N/project/ai4chips/share_space/general_llm/Qwen/Qwen3.6-35B-A3B/models--Qwen--Qwen3.6-35B-A3B/snapshots/995ad96eacd98c81ed38be0c5b274b04031597b0",
+      "hf": "Qwen/Qwen3.6-35B-A3B"
+    },
+    "gpt-oss-20b": {
+      "local": "/N/project/ai4chips/share_space/general_llm/openai/gpt-oss-20b/models--openai--gpt-oss-20b/snapshots/6cee5e81ee83917806bbde320786a8fb61efebee",
+      "hf": "openai/gpt-oss-20b"
+    }
   },
   "CybersecurityLLM": {
-    "Foundation-Sec-8B-Reasoning": "/N/project/ai4chips/share_space/cyber_llms/Foundation_8b/Foundation-Sec-8B-Reasoning/models--fdtn-ai--Foundation-Sec-8B-Reasoning/snapshots/63c930c82d7646226d33502bec5870019738400e",
-    "RedSage-Qwen3-8B-DPO": "/N/project/ai4chips/share_space/cyber_llms/RedSage/RedSage-Qwen3-8B-DPO/models--RISys-Lab--RedSage-Qwen3-8B-DPO/snapshots/04ec0b7738ede6717d86fa67993ade30c02dc79e",
-    "WhiteRabbitNeo-2-8B": "/N/project/ai4chips/share_space/cyber_llms/WhiteRabbitNeo/Llama-3.1-WhiteRabbitNeo-2-8B/models--WhiteRabbitNeo--Llama-3.1-WhiteRabbitNeo-2-8B/snapshots/df9a3dfd1ede1eee4d02c33b09440ad691fa9724"
+    "Foundation-Sec-8B-Reasoning": {
+      "local": "/N/project/ai4chips/share_space/cyber_llms/Foundation_8b/Foundation-Sec-8B-Reasoning/models--fdtn-ai--Foundation-Sec-8B-Reasoning/snapshots/63c930c82d7646226d33502bec5870019738400e",
+      "hf": "fdtn-ai/Foundation-Sec-8B-Reasoning"
+    },
+    "RedSage-Qwen3-8B-DPO": {
+      "local": "/N/project/ai4chips/share_space/cyber_llms/RedSage/RedSage-Qwen3-8B-DPO/models--RISys-Lab--RedSage-Qwen3-8B-DPO/snapshots/04ec0b7738ede6717d86fa67993ade30c02dc79e",
+      "hf": "RISys-Lab/RedSage-Qwen3-8B-DPO"
+    },
+    "WhiteRabbitNeo-2-8B": {
+      "local": "/N/project/ai4chips/share_space/cyber_llms/WhiteRabbitNeo/Llama-3.1-WhiteRabbitNeo-2-8B/models--WhiteRabbitNeo--Llama-3.1-WhiteRabbitNeo-2-8B/snapshots/df9a3dfd1ede1eee4d02c33b09440ad691fa9724",
+      "hf": "WhiteRabbitNeo/Llama-3.1-WhiteRabbitNeo-2-8B"
+    }
   }
 }
