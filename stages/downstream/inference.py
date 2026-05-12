@@ -165,7 +165,13 @@ def main() -> None:
     model = load_causal_lm(model_cfg, num_added)
     model = _maybe_attach_adapter(model, model_cfg)
     model.eval()
+    # load_causal_lm leaves an unquantized model on CPU (no device_map set).
+    # The Trainer in pretraining/hcl moves it for us; inference has to do it
+    # itself or the 8B forward passes run on CPU and take minutes per row.
+    if torch.cuda.is_available() and next(model.parameters()).device.type == "cpu":
+        model = model.to("cuda")
     device = next(model.parameters()).device
+    LOGGER.info("[infer] model on device: %s", device)
 
     ds = load_splits(data_cfg)
     # Only the test split is used; if it's missing, fall back to validation
@@ -180,10 +186,12 @@ def main() -> None:
     max_new_tokens = int(inference_cfg.get("max_new_tokens", 8))
     constrain_vocab = bool(inference_cfg.get("constrain_vocab", True))
 
-    predictions_path = Path(output_cfg.get("predictions_jsonl",
-                                            output_dir / f"predictions_{task.name}.jsonl"))
-    metrics_path = Path(output_cfg.get("metrics_json",
-                                       output_dir / f"metrics_{task.name}.json"))
+    predictions_path = Path(
+        output_cfg.get("predictions_jsonl") or output_dir / f"predictions_{task.name}.jsonl"
+    )
+    metrics_path = Path(
+        output_cfg.get("metrics_json") or output_dir / f"metrics_{task.name}.json"
+    )
     predictions_path.parent.mkdir(parents=True, exist_ok=True)
 
     rows_out: List[Dict[str, Any]] = []
