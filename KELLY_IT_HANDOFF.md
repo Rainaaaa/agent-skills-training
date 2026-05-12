@@ -169,8 +169,8 @@ parquets produced by the refactored `agent-skills-preparation` pipeline.
 
 ## 7. Known issues (patched locally; need upstream PRs)
 
-During the Jetstream validation we found four regressions in the
-downstream code and docker-compose. All four are fixed in this checkout;
+During the Jetstream validation we found six regressions in the
+downstream code + docker-compose. All six are fixed in this checkout;
 they should be pushed back to `github.com/Rainaaaa/agent-skills-training`
 so future clones don't hit them.
 
@@ -180,6 +180,8 @@ so future clones don't hit them.
 | `stages/downstream/inference.py:164-165` | Same regression as above. | ✓ |
 | `stages/downstream/sft/train.py:141` | `compute_eval_steps_from_fraction(training_cfg, train_ds)` uses the old signature; the new one requires `fraction, n_train, per_device_batch, grad_accum, world_size`. Also: the SFT trainer should gate this behind `eval_fraction_of_epoch` like pretraining/hcl do. | ✓ |
 | `docker-compose.yml` | Missing forwards for 9 `AGENTSKILLS_SFT_*` / `AGENTSKILLS_INFER_*` env vars that are referenced by the downstream example configs. | ✓ |
+| `stages/downstream/inference.py:183-186` | `output_cfg.get(key, default)` returns the empty string from `${VAR:-}` interpolation, not the default — so `Path("")` becomes `Path(".")` and `.open("w")` raises `IsADirectoryError`. Switched to `or`-fallback. | ✓ |
+| `stages/downstream/inference.py:165-167` | `load_causal_lm` only sets `device_map` when bnb quantization is on, so unquantized models stay on CPU. Pretraining/HCL get away with this because the HF `Trainer` moves the model on entry; inference doesn't use Trainer, so 8B forward passes ran on CPU and never finished (one row stuck for 12+ minutes at 100% CPU / 0% GPU). Added explicit `.to("cuda")` after adapter attach. | ✓ |
 
 Additional smaller items observed but not fixed (low priority):
 
@@ -234,13 +236,17 @@ The first-time download for all 9 registered models is one
 ## 10. Quick reference — Jetstream validation evidence
 
 End-to-end smoke results from 2026-05-12 on the Jetstream A100 (Foundation-Sec-8B
-LoRA `q_proj,v_proj` r=8, bf16, gradient_checkpointing):
+LoRA `q_proj,v_proj` r=8, bf16, gradient_checkpointing). All six entry
+points exercised:
 
-| Stage | Steps | Wall | train_loss | eval/test |
-|---|---|---|---|---|
-| Pretraining (CPT) | 4 | 14.2 s | 1.96 → 1.85 | val_ppl 4.41, test_ppl 6.67 |
-| HCL (synthetic adapter) | 4 | 9.4 s  | ~0 (trivial task) | acc 1.0 (synthetic) |
-| SFT (synthetic adapter) | 4 | ~3 s training + ~100 s eval | 14.99 | test_loss 13.81 |
+| Entry point | Wall | Metric |
+|---|---|---|
+| `stages/pretraining/train.py`         | 14.2 s   | val_ppl 4.41, test_ppl 6.67 |
+| `stages/hcl/train.py`                 | 9.4 s    | acc 1.0 (synthetic adapter, trivial signal) |
+| `stages/downstream/sft/train.py` (misalignment) | ~3 min   | test_loss 13.81 |
+| `stages/downstream/sft/train.py` (malicious)    | ~3 min   | test_loss 13.73 |
+| `stages/downstream/inference.py`      | 38 s for 32 rows | acc 0.469, F1 0.0 (4-step adapter; code path verified) |
+| `stages/downstream/eval_baseline.py`  | 5 s      | val ppl_token 7.50, top-1 59.7%, bpb 0.69 (untrained baseline) |
 
 The SFT eval/test numbers reflect Foundation-Sec on an out-of-domain
 yes/no→aligned/misaligned mapping; they're a code-path proof, not a
