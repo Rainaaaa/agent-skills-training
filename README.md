@@ -213,6 +213,113 @@ build a Trainer, save to `output_dir`). The Dockerfile copies the whole
 slot — add a `services.<your_stage>` entry to `docker-compose.yml` and
 you have a named target.
 
+## Running on a remote machine (Docker + SMB)
+
+The common deployment story for the training stage: you ship a Docker
+image plus a zip of the prepared datasets to a remote GPU host, and the
+admin gives you a mounted SMB share to point the data at. The pipeline
+is built for this — you set **two host paths** and the configs do the
+rest, no YAML edits.
+
+### Mental model
+
+```
+SMB share (admin-side, network)
+    │
+    ▼
+host path on the remote machine, e.g. /mnt/agentskills-data
+    │  (Docker bind-mount, defined in docker-compose.yml)
+    ▼
+container path /data:ro
+    │  (env-var defaults in configs, e.g. ${AGENTSKILLS_FULL_CPT_TRAIN:-/data/full_cpt/train.parquet})
+    ▼
+trainer reads /data/full_cpt/train.parquet
+```
+
+You don't need to know the SMB protocol — the remote admin mounts the
+share at some host path. From your side it's just "a directory on the
+host." Docker bind-mounts that directory into the container, and the
+configs read from the container path.
+
+### Canonical dataset layout
+
+Lay the zip out so the in-container defaults Just Work — that way you
+only override the host-side mount point, not every individual file
+path:
+
+```
+agentskills-data/                       # unzip here on the remote host
+├── full_cpt/
+│   ├── train.parquet                   # Phase 1 CPT splits
+│   ├── val.parquet
+│   └── test.parquet
+├── pl_hcl/
+│   ├── pairs_train.parquet             # Phase 2 HCL pair splits
+│   ├── pairs_val.parquet
+│   └── pairs_test.parquet
+├── sft/
+│   ├── malicious_train.parquet         # Stage 3 SFT splits (per task)
+│   ├── malicious_val.parquet
+│   ├── malicious_test.parquet
+│   └── misalignment_*.parquet
+├── real_world_eval/                    # human-reviewed corpus for inference
+│   └── eval.parquet
+└── models/                             # optional, see "Backbone weights" below
+    └── Foundation-Sec-8B-Reasoning/
+```
+
+### On the remote machine
+
+```bash
+# 1. Admin mounts the SMB share, e.g. at /mnt/agentskills-data.
+#    Verify it's readable:
+ls /mnt/agentskills-data/full_cpt/
+
+# 2. Tell docker-compose where to find data + where to write outputs.
+#    Put these in agent-skills-training/.env  (or export in your shell).
+cat > .env <<'EOF'
+AGENTSKILLS_DATA_HOST=/mnt/agentskills-data
+AGENTSKILLS_OUTPUTS_HOST=/mnt/agentskills-outputs
+AGENTSKILLS_BACKBONE=/data/models/Foundation-Sec-8B-Reasoning   # see below
+EOF
+
+# 3. Build + run as usual. Compose picks up .env automatically.
+docker compose build
+docker compose run --rm pretraining --config stages/pretraining/configs/example.yaml
+```
+
+That's the entire deploy story. If your data zip uses the canonical
+layout above, you do not need to override any of the per-file env vars
+(`AGENTSKILLS_FULL_CPT_TRAIN`, etc.) — their defaults already point at
+`/data/full_cpt/train.parquet` and friends.
+
+### Backbone weights — the one gotcha
+
+`model_path.json` ships pointing at the IU BR200 cluster paths
+(`/N/project/ai4chips/...`). Those won't exist on the remote machine.
+Three ways to handle it:
+
+1. **Bundle the backbone in the zip** (simplest, ~16GB for an 8B model).
+   Put it at `agentskills-data/models/<name>/` and set
+   `AGENTSKILLS_BACKBONE=/data/models/<name>`. The config sees an
+   absolute path and skips the registry lookup.
+2. **HF download at runtime** — set `AGENTSKILLS_BACKBONE` to a HF repo
+   id like `fdtn-ai/Foundation-Sec-8B-Reasoning`. Needs internet on the
+   remote machine, and the `models:` volume in `docker-compose.yml`
+   caches the download between runs.
+3. **Separate SMB share for models** — same trick as data: ask the
+   admin for a second mount, point `AGENTSKILLS_MODELS_HOST` at it, and
+   the compose file binds it to `/app/outputs/hf_cache`.
+
+### Why the configs don't break across hosts
+
+Every host-specific path in the configs is wrapped in
+`${VAR:-default}`. The `default` is the in-container path under
+`/data`, so a fresh clone runs with no edits. On the remote machine you
+only override the *host*-side mount point (`AGENTSKILLS_DATA_HOST`).
+The same trick is used in agent-skills-collection / -scanning /
+-preparation, so the pattern is consistent across the four repos.
+
 ## Pipeline guarantees
 
 - **Auto-resume from checkpoints.** `run.auto_resume: true` (default)
