@@ -161,8 +161,8 @@ def main() -> None:
     configure_logging(output_dir, run_cfg.get("log_level", "INFO"))
     LOGGER.info("task=%s model=%s output=%s", task.name, model_path, output_dir)
 
-    tokenizer = load_tokenizer(model_cfg, model_path)
-    model = load_causal_lm(model_cfg, model_path, tokenizer)
+    tokenizer, num_added = load_tokenizer(model_cfg)
+    model = load_causal_lm(model_cfg, num_added)
     model = _maybe_attach_adapter(model, model_cfg)
     model.eval()
     device = next(model.parameters()).device
