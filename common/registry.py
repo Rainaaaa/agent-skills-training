@@ -1,5 +1,5 @@
 """Model registry — resolves a short logical name (e.g. `Foundation-Sec-8B-Reasoning`)
-into a filesystem path or HF repo id, by reading `model_training/model_path.json`.
+into a filesystem path or HF repo id, by reading `model_path.json` at the repo root.
 
 Schema:
 
@@ -15,7 +15,7 @@ Usage from a config:
 
     model:
       name: Foundation-Sec-8B-Reasoning
-      # registry_path defaults to model_training/model_path.json
+      # registry_path defaults to <repo>/model_path.json
 
     # Explicit override always wins:
     model:
@@ -31,7 +31,7 @@ from typing import Any, Dict, Iterator, Optional, Tuple
 
 LOGGER = logging.getLogger(__name__)
 
-DEFAULT_REGISTRY_PATH = Path(__file__).resolve().parents[2] / "model_path.json"
+DEFAULT_REGISTRY_PATH = Path(__file__).resolve().parents[1] / "model_path.json"
 NOT_AVAILABLE_MARKERS = {"downloading", "not_available", "tbd", "todo"}
 
 
