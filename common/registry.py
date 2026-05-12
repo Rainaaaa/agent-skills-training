@@ -1,15 +1,24 @@
 """Model registry — resolves a short logical name (e.g. `Foundation-Sec-8B-Reasoning`)
 into a filesystem path or HF repo id, by reading `model_path.json` at the repo root.
 
-Schema:
+Schema (both forms supported; new entries should use the dict form):
 
     {
-      "GeneralLLMs":      { "<name>": "<path-or-hub-id>", ... },
-      "CybersecurityLLM": { "<name>": "<path-or-hub-id>", ... }
+      "GeneralLLMs": {
+        "<name>": "<path-or-hub-id>",                    # legacy string form
+        "<name>": {"local": "<path>", "hf": "<repo>"}    # preferred dict form
+      },
+      ...
     }
 
-A value of `"downloading"` (or any non-existent path) is treated as not yet
-available and raises a clear error.
+Resolution for dict entries:
+  1. If `local` is set and the path exists on disk, return `local`.
+  2. Otherwise, if `hf` is set, return the HF repo id (transformers will
+     download into the HF cache).
+  3. Otherwise raise.
+
+A value of `"downloading"` (or any other NOT_AVAILABLE marker) in either
+form is treated as not yet available and raises a clear error.
 
 Usage from a config:
 
@@ -26,7 +35,7 @@ Usage from a config:
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, Iterator, Optional, Tuple
+from typing import Any, Dict, Iterator, Optional, Tuple, Union
 
 
 LOGGER = logging.getLogger(__name__)
@@ -34,43 +43,91 @@ LOGGER = logging.getLogger(__name__)
 DEFAULT_REGISTRY_PATH = Path(__file__).resolve().parents[1] / "model_path.json"
 NOT_AVAILABLE_MARKERS = {"downloading", "not_available", "tbd", "todo"}
 
+# An entry value is either a string (legacy) or a dict with optional
+# `local`/`hf` keys (new). The registry is `{name: Entry}`.
+Entry = Union[str, Dict[str, Any]]
 
-def _iter_entries(data: Dict[str, Dict[str, str]]) -> Iterator[Tuple[str, str, str]]:
-    """Yield (category, name, path) triples; tolerates flat shape too."""
+
+def _iter_entries(data: Dict[str, Any]) -> Iterator[Tuple[str, str, Entry]]:
+    """Yield (category, name, entry) triples.
+
+    Recognizes two shapes:
+      - {category: {name: entry}}                                 (canonical)
+      - {name: entry}                                             (flat root)
+
+    An "entry" is either a string path/repo OR a dict like
+    {"local": "...", "hf": "..."} — both are passed through to the resolver.
+    """
     for category, models in data.items():
-        if isinstance(models, dict):
-            for name, path in models.items():
-                yield category, name, path
+        if isinstance(models, dict) and not {"local", "hf"} & set(models.keys()):
+            # Category dict: descend one level.
+            for name, entry in models.items():
+                yield category, name, entry
         else:
+            # Flat root: the value itself is an entry (string or rich dict).
             yield "_root", category, models
 
 
-def load_registry(path: Optional[Path] = None) -> Dict[str, str]:
-    """Return a flat `{name: path}` dict from `model_path.json`."""
+def load_registry(path: Optional[Path] = None) -> Dict[str, Entry]:
+    """Return a flat `{name: entry}` dict from `model_path.json`."""
     p = Path(path) if path else DEFAULT_REGISTRY_PATH
     if not p.exists():
         raise FileNotFoundError(f"Model registry not found at {p}")
     with p.open("r", encoding="utf-8") as h:
         data = json.load(h)
-    flat: Dict[str, str] = {}
-    for _, name, target in _iter_entries(data):
-        flat[name] = target
+    flat: Dict[str, Entry] = {}
+    for _, name, entry in _iter_entries(data):
+        flat[name] = entry
     return flat
 
 
+def _is_marker(value: Any) -> bool:
+    return isinstance(value, str) and value.strip().lower() in NOT_AVAILABLE_MARKERS
+
+
+def _resolve_entry(name: str, entry: Entry) -> str:
+    """Pick the best target for an entry (local-if-present, else HF)."""
+    if isinstance(entry, str):
+        if _is_marker(entry):
+            raise FileNotFoundError(
+                f"Model '{name}' is marked '{entry}' in registry — not yet downloaded."
+            )
+        return entry
+    if isinstance(entry, dict):
+        local = entry.get("local")
+        hf = entry.get("hf")
+        if local and not _is_marker(local) and Path(local).expanduser().exists():
+            LOGGER.info("registry: '%s' -> local %s", name, local)
+            return str(Path(local).expanduser())
+        if hf and not _is_marker(hf):
+            LOGGER.info(
+                "registry: '%s' local missing; falling back to HF '%s'", name, hf,
+            )
+            return hf
+        if local and not _is_marker(local):
+            # Local was specified but path doesn't exist, and no HF fallback.
+            raise FileNotFoundError(
+                f"Model '{name}': local path '{local}' does not exist and no 'hf' fallback set."
+            )
+        raise FileNotFoundError(
+            f"Model '{name}' has no usable target (entry={entry})."
+        )
+    raise TypeError(f"Model '{name}' has unsupported entry type {type(entry)}: {entry!r}")
+
+
 def resolve(name: str, registry_path: Optional[Path] = None) -> str:
-    """Resolve `name` -> path via the registry. Raises if missing or marked unavailable."""
+    """Resolve `name` -> path/HF-repo via the registry.
+
+    For dict entries, prefer `local` if the path exists on disk; otherwise
+    fall back to `hf`. Raises KeyError if name is absent, FileNotFoundError
+    if neither target is usable.
+    """
     registry = load_registry(registry_path)
     if name not in registry:
         raise KeyError(
             f"Model '{name}' not found in registry. Available: {sorted(registry)}"
         )
-    target = registry[name]
-    if isinstance(target, str) and target.strip().lower() in NOT_AVAILABLE_MARKERS:
-        raise FileNotFoundError(
-            f"Model '{name}' is marked '{target}' in registry — not yet downloaded."
-        )
-    return target
+    return _resolve_entry(name, registry[name])
 
 
 def resolve_model_path(
