@@ -298,6 +298,82 @@ model.quantization=null                    # drop 8-bit base; bf16 LoRA fits in 
 (Both stay ON by default for safety on smaller cards; flip per-config or
 per-CLI when you know your VRAM budget.)
 
+### Full evaluation matrix across all backbones
+
+`scripts/run_full_eval.sh` orchestrates the curated-dataset eval matrix
+end-to-end across multiple backbones. Per model, it runs:
+
+1. **Baseline ppl** (intrinsic next-token-prediction) — pre-CPT
+2. **Zero-shot inference** misalignment_detection — pre-CPT
+3. **Zero-shot inference** malicious_detection — pre-CPT
+4. **CPT sub-stage 1** training (stage1 data, `max_seq_length=4096`)
+5. **Baseline ppl** — post-CPT (adapter-aware; `eval_baseline.py` now
+   accepts `model.adapter_path`)
+6. **Zero-shot inference** misalignment_detection — post-CPT
+7. **Zero-shot inference** malicious_detection — post-CPT
+8. **SFT misalignment** training, chained from the CPT adapter
+9. **SFT-adapter inference** misalignment_detection
+10. **SFT malicious** training, chained from the CPT adapter
+11. **SFT-adapter inference** malicious_detection
+
+Then `scripts/aggregate_eval.py` rolls every run-name's metrics JSON
+into one wide comparison table (Markdown + JSON).
+
+Default model list (override on CLI):
+
+- `Foundation-Sec-8B-Reasoning`
+- `RedSage-Qwen3-8B-DPO`
+- `WhiteRabbitNeo-2-8B`
+- `llama3.1-8b`
+- `Qwen3-8B`
+- `gemma-4-E4B`
+
+**Run it:**
+
+```bash
+# Make sure both env vars are exported (or in .env), plus HF_TOKEN for
+# the gated backbones (Llama-3.1, Gemma, WhiteRabbitNeo).
+export AGENTSKILLS_DATA_HOST=/opt/agentskills/data
+export AGENTSKILLS_OUTPUTS_HOST=/opt/agentskills/training_outputs
+export HF_TOKEN=hf_...
+
+# All six default models:
+bash scripts/run_full_eval.sh
+
+# Or a subset:
+bash scripts/run_full_eval.sh Foundation-Sec-8B-Reasoning Qwen3-8B
+
+# After completion (or anytime to see partial results):
+docker compose run --rm --no-deps --entrypoint python pretraining \
+    scripts/aggregate_eval.py /app/outputs/runs
+```
+
+**Idempotent.** Each step checks for its expected output artifact
+(`final_model/`, `baseline_metrics.json`, or `metrics_<task>.json`)
+and skips if found. Re-running after a crash picks up where it left
+off; you don't lose hours of work.
+
+**Failure-resilient.** Per-model failures don't abort the loop — the
+script reports a per-model success/fail summary at the end. The one
+exception is a CPT failure: downstream steps for that model are
+skipped (they all depend on the CPT adapter).
+
+**Runtime budget.** Rough rule of thumb: per 8B-class model on a
+single A100 40GB, CPT sub-stage 1 dominates at 8-30 hr depending on
+`train_fraction`, the seven eval steps each add ~5-15 min, and each
+SFT add ~30-90 min. **Multi-GPU helps proportionally** — the
+auto-torchrun entrypoint will use every visible GPU for trainer
+scripts. For all 6 models on a single A100, plan a week; on 8×A100,
+plan a long weekend. Lower `data.train_fraction` (e.g. `0.1`) to
+shorten end-to-end iteration when validating the pipeline rather than
+producing publication numbers.
+
+**Coverage caveat.** This is the **curated dataset** path only —
+real-world / human-verified-set inference and few-shot (n-shot)
+inference are not wired up in this orchestrator. Tracked as
+follow-ups; both will land once the verified set is finalized and
+the exemplar pool is decided.
+
 ---
 
 ## 6. Stages 2 & 3 against legacy pre-refactor data (smoke only)

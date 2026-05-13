@@ -430,3 +430,11 @@ The same trick is used in agent-skills-collection / -scanning /
   single-process). Effective batch =
   `per_device_batch × world_size × grad_accum` — see
   `KELLY_IT_HANDOFF.md §5` "Scaling to multi-GPU" for the rescale table.
+- **Full-matrix eval orchestrator.** `scripts/run_full_eval.sh` loops
+  the registered backbones and runs the curated-dataset eval matrix
+  (intrinsic ppl + zero-shot alignment/malicious + SFT-adapter
+  alignment/malicious) before *and* after CPT sub-stage 1 per model.
+  Idempotent (re-run picks up where it crashed) and per-model
+  failure-resilient. `scripts/aggregate_eval.py` rolls the per-run
+  JSONs into one Markdown+JSON comparison table. See
+  `KELLY_IT_HANDOFF.md §5` "Full evaluation matrix across all backbones".
