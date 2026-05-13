@@ -167,12 +167,13 @@ parquets produced by the refactored `agent-skills-preparation` pipeline.
 
 ---
 
-## 7. Known issues (patched locally; need upstream PRs)
+## 7. Known issues (fixed on `main`)
 
 During the Jetstream validation we found six regressions in the
-downstream code + docker-compose. All six are fixed in this checkout;
-they should be pushed back to `github.com/Rainaaaa/agent-skills-training`
-so future clones don't hit them.
+downstream code + docker-compose. All six are fixed on `main` via
+[PR #1](https://github.com/Rainaaaa/agent-skills-training/pull/1)
+(merged 2026-05-12), so a fresh clone of `main` has them all. The
+table below is retained as a record of what was wrong.
 
 | File | Issue | Patched |
 |---|---|---|
