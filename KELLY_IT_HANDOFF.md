@@ -41,6 +41,17 @@ pulled from HuggingFace.
                                                # on legacy data; see §6.
 ```
 
+**Two-substage continual training (CPT + HCL).** Both `full_cpt_v2/` and
+`pl_hcl/pl_hcl_v1/` are split on disk into `stage1/` and `stage2/`:
+
+- `stage1/` — metadata + instructions only. Train at `max_seq_length=4096`.
+- `stage2/` — all files (incl. full code/content). **Continual-train**
+  from sub-stage 1 at `max_seq_length=10240` — sub-stage 2 resumes from
+  sub-stage 1's last checkpoint via `run.resume_from_checkpoint`, not a
+  fresh base. See §5 for the run-it-twice commands.
+
+`sft/sft_v1/` has no sub-stages; SFT is a single train/val/test pass.
+
 The compose file expects exactly **two** host paths set via env (or `.env`):
 
 - `AGENTSKILLS_DATA_HOST` — bind-mounted RO into the container at `/data`
@@ -121,19 +132,112 @@ If all three exit 0 and write a `final_model/` directory, the host is good.
 
 ## 5. Real training run
 
-Same commands, drop the smoke caps:
+CPT and HCL are **continual-curriculum** sequences: train on `stage1/`
+data (metadata, `max_seq_length=4096`), then *continue* on `stage2/`
+data (all files, `max_seq_length=10240`) starting from sub-stage 1's
+checkpoint. SFT (Stage 3) has no sub-stages.
+
+### Stage 1 (CPT) — sub-stage 1 → sub-stage 2
 
 ```bash
+# sub-stage 1: metadata @ 4096
 docker compose run --rm pretraining \
     stages/pretraining/train.py \
     --config stages/pretraining/configs/full_cpt_v1_quarter.yaml \
-    run.run_name=full_cpt_v1_quarter
+    run.run_name=cpt_substage1 \
+    data.train_file=/data/full_cpt_v2/stage1/train.parquet \
+    data.validation_file=/data/full_cpt_v2/stage1/val.parquet \
+    data.test_file=/data/full_cpt_v2/stage1/test.parquet \
+    data.max_seq_length=4096
+
+# sub-stage 2: all files @ 10240, continues from sub-stage 1
+docker compose run --rm pretraining \
+    stages/pretraining/train.py \
+    --config stages/pretraining/configs/full_cpt_v1_quarter.yaml \
+    run.run_name=cpt_substage2 \
+    run.resume_from_checkpoint=/app/outputs/runs/Foundation-Sec-8B-Reasoning/cpt_substage1/checkpoint-<N> \
+    data.train_file=/data/full_cpt_v2/stage2/train.parquet \
+    data.validation_file=/data/full_cpt_v2/stage2/val.parquet \
+    data.test_file=/data/full_cpt_v2/stage2/test.parquet \
+    data.max_seq_length=10240
 ```
+
+Replace `<N>` with the actual checkpoint number from sub-stage 1's
+output dir (latest one is usually right; the trainer writes
+`checkpoint-N/` every `save_fraction_of_epoch`).
+
+### Stage 2 (HCL) — same pattern, chained onto CPT sub-stage 2's adapter
+
+```bash
+# HCL sub-stage 1: chains on CPT sub-stage 2's adapter, metadata pairs @ 4096
+docker compose run --rm hcl \
+    stages/hcl/train.py \
+    --config stages/hcl/configs/lp_hcl_v1_quarter.yaml \
+    run.run_name=hcl_substage1 \
+    model.phase1_adapter_path=/app/outputs/runs/Foundation-Sec-8B-Reasoning/cpt_substage2/final_model \
+    data.train_file=/data/pl_hcl/pl_hcl_v1/stage1/train.parquet \
+    data.validation_file=/data/pl_hcl/pl_hcl_v1/stage1/val.parquet \
+    data.test_file=/data/pl_hcl/pl_hcl_v1/stage1/test.parquet \
+    data.max_seq_length=4096
+
+# HCL sub-stage 2: all-files pairs @ 10240, continues from HCL sub-stage 1
+docker compose run --rm hcl \
+    stages/hcl/train.py \
+    --config stages/hcl/configs/lp_hcl_v1_quarter.yaml \
+    run.run_name=hcl_substage2 \
+    run.resume_from_checkpoint=/app/outputs/runs/Foundation-Sec-8B-Reasoning/hcl_substage1/checkpoint-<N> \
+    data.train_file=/data/pl_hcl/pl_hcl_v1/stage2/train.parquet \
+    data.validation_file=/data/pl_hcl/pl_hcl_v1/stage2/val.parquet \
+    data.test_file=/data/pl_hcl/pl_hcl_v1/stage2/test.parquet \
+    data.max_seq_length=10240
+```
+
+### Stage 3 (SFT) — single pass, no sub-stages
+
+```bash
+docker compose run --rm sft-align \
+    stages/downstream/sft/train.py \
+    --config stages/downstream/configs/sft_misalignment_example.yaml \
+    run.run_name=sft_align_v1
+```
+
+### Controlling the training-data fraction
+
+`data.train_fraction`, `data.validation_fraction`, and
+`data.test_fraction` are independent. To train on half the rows while
+keeping the full validation and test splits, just override `train_fraction`:
+
+```bash
+... data.train_fraction=0.5
+```
+
+(`1.0` or omitted both mean "use all rows" — only fractions in `(0, 1)`
+shrink a split, see `common/data.py:subsample_splits`.) Absolute caps
+via `data.max_train_rows` / `data.max_validation_rows` /
+`data.max_test_rows` are also available; when both a fraction and a cap
+apply to the same split, the smaller of the two wins.
+
+### Run-name discipline
 
 **Use a distinct `run_name` per experiment.** The default
 `auto_resume: true` keys off `<output_root>/<sanitized_model>/<run_name>/`,
 so reusing a name silently extends an old run — and reusing across stages
 will *fail* because checkpoint shapes differ (see §7 known issues).
+
+### LR-schedule heads-up for `resume_from_checkpoint`
+
+`run.resume_from_checkpoint` restores the optimizer + scheduler state.
+With the default `cosine` schedule, the LR has decayed near zero by the
+end of sub-stage 1 — so sub-stage 2 won't learn much unless you also
+override one of:
+
+- `training.num_train_epochs=<higher>` so the cosine extends past sub-stage
+  1's endpoint, or
+- `training.lr_scheduler_type=constant` to ignore the inherited schedule.
+
+(A cleaner fix would be a CPT-side `model.phase1_adapter_path` knob
+mirroring HCL's; that's tracked as a follow-up. Until it lands, override
+the schedule explicitly when chaining sub-stages.)
 
 ---
 
