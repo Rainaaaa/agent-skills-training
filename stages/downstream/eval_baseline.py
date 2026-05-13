@@ -126,6 +126,14 @@ def main() -> None:
             f"eval_split={eval_split!r} not in dataset; available={list(raw_datasets)}"
         )
 
+    # Baseline eval only touches `eval_split` — drop the others before
+    # tokenization so we don't waste minutes packing a 100K-row train split
+    # the Trainer will never read. (Was a noticeable cost in the
+    # full-eval-orchestrator pre/post-CPT baseline pairs.)
+    for split in list(raw_datasets.keys()):
+        if split != eval_split:
+            del raw_datasets[split]
+
     corpus_stats = compute_corpus_stats(
         {eval_split: raw_datasets[eval_split]}, text_column=text_column
     )

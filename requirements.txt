@@ -27,8 +27,11 @@ tensorboard>=2.16,<3
 # local installs (`pip install -r requirements.txt`).
 # torch>=2.1,<3
 
-# Optional — uncomment if you need 4-bit / 8-bit base weights
-# bitsandbytes>=0.43,<0.45
+# 4-bit / 8-bit base-weight quantization. Required by production CPT configs
+# (e.g. full_cpt_v1_quarter.yaml sets model.quantization.load_in_8bit=true)
+# so 8B-class backbones fit comfortably on 24-40 GB GPUs. Lazy-imported by
+# common/modeling.py — only paid for when a config requests quantization.
+bitsandbytes>=0.43,<0.45
 
 # Optional — flash-attention 2 (rebuild against your CUDA)
 # flash-attn>=2.5,<3

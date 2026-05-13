@@ -54,6 +54,7 @@ RUN pip install -r /app/requirements.txt
 # Source — every stage shares one image.
 COPY common  /app/common
 COPY stages  /app/stages
+COPY scripts /app/scripts
 COPY model_path.json /app/model_path.json
 COPY README.md       /app/README.md
 

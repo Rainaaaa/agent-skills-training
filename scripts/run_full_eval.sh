@@ -52,6 +52,24 @@ fi
 : "${AGENTSKILLS_DATA_HOST:?Set AGENTSKILLS_DATA_HOST}"
 mkdir -p "$AGENTSKILLS_OUTPUTS_HOST/runs"
 
+# Smoke mode — set AGENTSKILLS_FULL_EVAL_SMOKE=1 to drop training caps
+# everywhere and finish the full 11-step matrix on one model in ~10-15
+# min on an A100. For sanity-checking the orchestrator wiring before
+# committing to a multi-day real run.
+SMOKE_TRAIN_OPTS=()
+SMOKE_BASELINE_OPTS=()
+SMOKE_INFER_OPTS=()
+if [ -n "${AGENTSKILLS_FULL_EVAL_SMOKE:-}" ]; then
+  echo "[smoke] AGENTSKILLS_FULL_EVAL_SMOKE=1 — applying small-cap overrides"
+  SMOKE_TRAIN_OPTS=(
+    training.max_steps=2
+    data.max_train_rows=16 data.max_validation_rows=4 data.max_test_rows=4
+    data.max_seq_length=512
+  )
+  SMOKE_BASELINE_OPTS=(data.max_test_rows=8 data.max_seq_length=512)
+  SMOKE_INFER_OPTS=(data.max_rows=8)
+fi
+
 # Run-name constants — must match `scripts/aggregate_eval.py`.
 NAME_BASELINE_PRE="eval_baseline_pre_cpt"
 NAME_BASELINE_POST="eval_baseline_post_cpt"
@@ -73,6 +91,13 @@ MAL_TEST=/data/adapted/sft_malicious/test.parquet
 host_dir() { echo "$AGENTSKILLS_OUTPUTS_HOST/runs/$1/$2"; }
 in_dir()   { echo "/app/outputs/runs/$1/$2"; }
 
+# Inference and SFT both prepend a task-name prefix to the bare run_name
+# when building their output dir — see `_derive_output_dir` in
+# inference.py and stages/downstream/sft/train.py. The orchestrator's
+# marker checks and chained-adapter paths must match.
+infer_subdir() { echo "infer_$1__$2"; }   # $1=task  $2=run_name
+sft_subdir()   { echo "sft_$1__$2"; }     # $1=task  $2=run_name
+
 already_done() {
   local marker=$1 step=$2
   if [ -e "$marker" ]; then
@@ -91,12 +116,18 @@ step_baseline() {
   echo "    [run]  baseline $run_name"
   local overrides=(
     model.name="$model"
-    data.test_file="$CPT_DATA_DIR/test.parquet"
+    run.output_root=/app/outputs/runs
+    "data.test_file=$CPT_DATA_DIR/test.parquet"
     data.max_test_rows=0
     run.run_name="$run_name"
   )
   [ -n "$adapter" ] && overrides+=("model.adapter_path=$adapter")
+  overrides+=("${SMOKE_BASELINE_OPTS[@]}")
+  # Pass the script path explicitly — `docker compose run <service> <args>`
+  # replaces the service's default command entirely, so the entrypoint
+  # would otherwise see `--config` as $1 (not a .py path).
   docker compose run --rm baseline \
+      stages/downstream/eval_baseline.py \
       --config stages/downstream/configs/eval_baseline_example.yaml \
       "${overrides[@]}"
 }
@@ -109,16 +140,22 @@ step_zs_inference() {
     malicious_detection)    test_file="$MAL_TEST" ;;
     *) echo "    [BUG] unknown task: $task" >&2; return 1 ;;
   esac
-  local marker="$(host_dir "$model" "$run_name")/metrics_${task}.json"
+  local marker="$(host_dir "$model" "$(infer_subdir "$task" "$run_name")")/metrics_${task}.json"
   already_done "$marker" "zero-shot $task" && return 0
   echo "    [run]  zero-shot inference $task — $run_name"
+  local overrides=(
+    model.name="$model"
+    run.output_root=/app/outputs/runs
+    "data.task=$task"
+    "data.test_file=$test_file"
+    data.max_rows=0
+    run.run_name="$run_name"
+  )
+  overrides+=("${SMOKE_INFER_OPTS[@]}")
   docker compose run --rm inference \
+      stages/downstream/inference.py \
       --config stages/downstream/configs/inference_example.yaml \
-      model.name="$model" \
-      "data.task=$task" \
-      "data.test_file=$test_file" \
-      data.max_rows=0 \
-      run.run_name="$run_name"
+      "${overrides[@]}"
 }
 
 step_sft_inference() {
@@ -128,17 +165,23 @@ step_sft_inference() {
     misalignment_detection) test_file="$ALIGN_TEST" ;;
     malicious_detection)    test_file="$MAL_TEST" ;;
   esac
-  local marker="$(host_dir "$model" "$run_name")/metrics_${task}.json"
+  local marker="$(host_dir "$model" "$(infer_subdir "$task" "$run_name")")/metrics_${task}.json"
   already_done "$marker" "sft inference $task" && return 0
   echo "    [run]  sft-adapter inference $task — $run_name"
+  local overrides=(
+    model.name="$model"
+    run.output_root=/app/outputs/runs
+    "model.adapter_path=$adapter"
+    "data.task=$task"
+    "data.test_file=$test_file"
+    data.max_rows=0
+    run.run_name="$run_name"
+  )
+  overrides+=("${SMOKE_INFER_OPTS[@]}")
   docker compose run --rm inference \
+      stages/downstream/inference.py \
       --config stages/downstream/configs/inference_example.yaml \
-      model.name="$model" \
-      "model.adapter_path=$adapter" \
-      "data.task=$task" \
-      "data.test_file=$test_file" \
-      data.max_rows=0 \
-      run.run_name="$run_name"
+      "${overrides[@]}"
 }
 
 step_cpt() {
@@ -146,28 +189,46 @@ step_cpt() {
   local marker="$(host_dir "$model" "$NAME_CPT")/final_model"
   already_done "$marker" "CPT $NAME_CPT" && return 0
   echo "    [run]  CPT sub-stage 1"
+  # full_cpt_v1_quarter.yaml is tuned for the IU BR200 cluster:
+  #   - output_root uses ${AGENTSKILLS_PREPARED_ROOT:-./inputs}/runs
+  #     (not a compose-forwarded env var → writes to /app/inputs/runs/)
+  #   - attn_implementation=flash_attention_2 (flash-attn not in the stock image)
+  # Both get overridden here so the orchestrator works on a fresh docker
+  # install. The 8-bit quantization in this config IS supported (bitsandbytes
+  # is in requirements.txt).
+  local overrides=(
+    model.name="$model"
+    run.output_root=/app/outputs/runs
+    run.run_name="$NAME_CPT"
+    model.attn_implementation=sdpa
+    "data.train_file=$CPT_DATA_DIR/train.parquet"
+    "data.validation_file=$CPT_DATA_DIR/val.parquet"
+    "data.test_file=$CPT_DATA_DIR/test.parquet"
+    data.max_seq_length=4096
+  )
+  overrides+=("${SMOKE_TRAIN_OPTS[@]}")
   docker compose run --rm pretraining \
       stages/pretraining/train.py \
       --config stages/pretraining/configs/full_cpt_v1_quarter.yaml \
-      model.name="$model" \
-      run.run_name="$NAME_CPT" \
-      "data.train_file=$CPT_DATA_DIR/train.parquet" \
-      "data.validation_file=$CPT_DATA_DIR/val.parquet" \
-      "data.test_file=$CPT_DATA_DIR/test.parquet" \
-      data.max_seq_length=4096
+      "${overrides[@]}"
 }
 
 step_sft() {
-  local model=$1 service=$2 config=$3 cpt_adapter=$4 run_name=$5
-  local marker="$(host_dir "$model" "$run_name")/final_model"
+  local model=$1 service=$2 task=$3 config=$4 cpt_adapter=$5 run_name=$6
+  local marker="$(host_dir "$model" "$(sft_subdir "$task" "$run_name")")/final_model"
   already_done "$marker" "SFT $run_name" && return 0
   echo "    [run]  SFT $run_name"
+  local overrides=(
+    model.name="$model"
+    run.output_root=/app/outputs/runs
+    "model.phase1_adapter_path=$cpt_adapter"
+    run.run_name="$run_name"
+  )
+  overrides+=("${SMOKE_TRAIN_OPTS[@]}")
   docker compose run --rm "$service" \
       stages/downstream/sft/train.py \
       --config "$config" \
-      model.name="$model" \
-      "model.phase1_adapter_path=$cpt_adapter" \
-      run.run_name="$run_name"
+      "${overrides[@]}"
 }
 
 # --- main loop ---
@@ -182,8 +243,10 @@ for MODEL in "${MODELS[@]}"; do
   echo "============================================================"
 
   CPT_ADAPTER=$(in_dir "$MODEL" "$NAME_CPT")/final_model
-  SFT_ALIGN_ADAPTER=$(in_dir "$MODEL" "$NAME_SFT_ALIGN")/final_model
-  SFT_MAL_ADAPTER=$(in_dir "$MODEL" "$NAME_SFT_MAL")/final_model
+  # SFT trainer names its output dir <task>__<run_name>, so the adapter
+  # paths used downstream must include the task prefix.
+  SFT_ALIGN_ADAPTER=$(in_dir "$MODEL" "$(sft_subdir misalignment_detection "$NAME_SFT_ALIGN")")/final_model
+  SFT_MAL_ADAPTER=$(in_dir "$MODEL" "$(sft_subdir malicious_detection "$NAME_SFT_MAL")")/final_model
 
   any_failed=0
   step_baseline     "$MODEL" "$NAME_BASELINE_PRE"                                      || any_failed=1
@@ -193,11 +256,11 @@ for MODEL in "${MODELS[@]}"; do
   step_baseline     "$MODEL" "$NAME_BASELINE_POST" "$CPT_ADAPTER"                      || any_failed=1
   step_zs_inference "$MODEL" misalignment_detection "$NAME_ZS_ALIGN_POST"              || any_failed=1
   step_zs_inference "$MODEL" malicious_detection    "$NAME_ZS_MAL_POST"                || any_failed=1
-  step_sft           "$MODEL" sft-align \
+  step_sft           "$MODEL" sft-align misalignment_detection \
                      stages/downstream/configs/sft_misalignment_example.yaml \
                      "$CPT_ADAPTER" "$NAME_SFT_ALIGN"                                   || any_failed=1
   step_sft_inference "$MODEL" misalignment_detection "$SFT_ALIGN_ADAPTER" "$NAME_EVAL_SFT_ALIGN" || any_failed=1
-  step_sft           "$MODEL" sft-mal \
+  step_sft           "$MODEL" sft-mal malicious_detection \
                      stages/downstream/configs/sft_malicious_example.yaml \
                      "$CPT_ADAPTER" "$NAME_SFT_MAL"                                     || any_failed=1
   step_sft_inference "$MODEL" malicious_detection "$SFT_MAL_ADAPTER" "$NAME_EVAL_SFT_MAL" || any_failed=1
@@ -216,7 +279,9 @@ echo "============================================================"
 echo "  Succeeded (${#SUCCEEDED_MODELS[@]}): ${SUCCEEDED_MODELS[*]:-(none)}"
 echo "  Failed    (${#FAILED_MODELS[@]}): ${FAILED_MODELS[*]:-(none)}"
 echo ""
-echo "  Aggregate the results:"
+echo "  Aggregate the results (pure stdlib, runs on host python):"
+echo "    python3 scripts/aggregate_eval.py \"$AGENTSKILLS_OUTPUTS_HOST/runs\""
+echo "  Or from inside the docker image (rebuild required if scripts/ is new):"
 echo "    docker compose run --rm --no-deps --entrypoint python pretraining \\"
 echo "        scripts/aggregate_eval.py /app/outputs/runs"
 echo ""

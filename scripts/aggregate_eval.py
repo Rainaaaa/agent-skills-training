@@ -29,15 +29,18 @@ from typing import Any, Dict, List, Optional
 
 
 # Must match the NAME_* constants in scripts/run_full_eval.sh.
-RUN_NAMES = {
-    "baseline_pre":   "eval_baseline_pre_cpt",
-    "baseline_post":  "eval_baseline_post_cpt",
-    "zs_align_pre":   "eval_zs_misalignment_pre_cpt",
-    "zs_align_post":  "eval_zs_misalignment_post_cpt",
-    "zs_mal_pre":     "eval_zs_malicious_pre_cpt",
-    "zs_mal_post":    "eval_zs_malicious_post_cpt",
-    "sft_align":      "eval_sft_misalignment",
-    "sft_mal":        "eval_sft_malicious",
+# Each entry: (subdir-on-disk, file-basename, "intrinsic"|"extrinsic").
+# Inference and SFT subdirs are task-prefixed (see infer_subdir / sft_subdir
+# in run_full_eval.sh), so we record the resolved subdir directly here.
+ARTIFACTS = {
+    "baseline_pre":  ("eval_baseline_pre_cpt",                                       "baseline_metrics.json",                "intrinsic"),
+    "baseline_post": ("eval_baseline_post_cpt",                                      "baseline_metrics.json",                "intrinsic"),
+    "zs_align_pre":  ("infer_misalignment_detection__eval_zs_misalignment_pre_cpt",  "metrics_misalignment_detection.json",  "extrinsic"),
+    "zs_align_post": ("infer_misalignment_detection__eval_zs_misalignment_post_cpt", "metrics_misalignment_detection.json",  "extrinsic"),
+    "zs_mal_pre":    ("infer_malicious_detection__eval_zs_malicious_pre_cpt",        "metrics_malicious_detection.json",     "extrinsic"),
+    "zs_mal_post":   ("infer_malicious_detection__eval_zs_malicious_post_cpt",       "metrics_malicious_detection.json",     "extrinsic"),
+    "sft_align":     ("infer_misalignment_detection__eval_sft_misalignment",         "metrics_misalignment_detection.json",  "extrinsic"),
+    "sft_mal":       ("infer_malicious_detection__eval_sft_malicious",               "metrics_malicious_detection.json",     "extrinsic"),
 }
 
 # Subset of baseline_metrics.json keys worth surfacing.
@@ -45,18 +48,6 @@ BASELINE_KEYS = ["eval_ppl_token", "eval_ppl_byte", "eval_bits_per_byte", "eval_
 
 # Inference metrics_<task>.json keys we want.
 EXTRINSIC_KEYS = ["accuracy", "precision", "recall", "f1", "n"]
-
-# Map run-name → (file basename, schema label) so aggregator knows what to load.
-ARTIFACTS = {
-    "baseline_pre":  ("baseline_metrics.json",                       "intrinsic"),
-    "baseline_post": ("baseline_metrics.json",                       "intrinsic"),
-    "zs_align_pre":  ("metrics_misalignment_detection.json",         "extrinsic"),
-    "zs_align_post": ("metrics_misalignment_detection.json",         "extrinsic"),
-    "zs_mal_pre":    ("metrics_malicious_detection.json",            "extrinsic"),
-    "zs_mal_post":   ("metrics_malicious_detection.json",            "extrinsic"),
-    "sft_align":     ("metrics_misalignment_detection.json",         "extrinsic"),
-    "sft_mal":       ("metrics_malicious_detection.json",            "extrinsic"),
-}
 
 
 def _load(path: Path) -> Optional[Dict[str, Any]]:
@@ -93,9 +84,8 @@ def collect(runs_root: Path) -> List[Dict[str, Any]]:
     for model_dir in sorted(p for p in runs_root.iterdir() if p.is_dir()):
         model = model_dir.name
         row: Dict[str, Any] = {"model": model}
-        for short, run_name in RUN_NAMES.items():
-            fname, kind = ARTIFACTS[short]
-            data = _load(model_dir / run_name / fname)
+        for short, (subdir, fname, kind) in ARTIFACTS.items():
+            data = _load(model_dir / subdir / fname)
             row[short] = _extract(data, kind) if data else None
         out.append(row)
     return out
