@@ -28,22 +28,28 @@ services:
     environment:
       # These are forwarded into the configs via ${VAR:-default} interpolation.
       AGENTSKILLS_TRAIN_OUTPUT_ROOT: "${AGENTSKILLS_TRAIN_OUTPUT_ROOT:-/app/outputs/runs}"
-      AGENTSKILLS_FULL_CPT_TRAIN:    "${AGENTSKILLS_FULL_CPT_TRAIN:-/data/full_cpt/train.parquet}"
-      AGENTSKILLS_FULL_CPT_VAL:      "${AGENTSKILLS_FULL_CPT_VAL:-/data/full_cpt/val.parquet}"
-      AGENTSKILLS_FULL_CPT_TEST:     "${AGENTSKILLS_FULL_CPT_TEST:-/data/full_cpt/test.parquet}"
-      AGENTSKILLS_HCL_TRAIN:         "${AGENTSKILLS_HCL_TRAIN:-/data/pl_hcl/pairs_train.parquet}"
-      AGENTSKILLS_HCL_VAL:           "${AGENTSKILLS_HCL_VAL:-/data/pl_hcl/pairs_val.parquet}"
-      AGENTSKILLS_HCL_TEST:          "${AGENTSKILLS_HCL_TEST:-/data/pl_hcl/pairs_test.parquet}"
+      # Data path defaults match the v2 bundle layout shipped via
+      # KELLY_IT_HANDOFF.md §2. CPT defaults to sub-stage 1 (smoke-friendly;
+      # for sub-stage 2 or real training override per KELLY_IT_HANDOFF.md §5).
+      # HCL and SFT default to the legacy-→new schema adapter output
+      # (full real-training parquets come from agent-skills-preparation when
+      # that pipeline lands; override AGENTSKILLS_HCL_*/SFT_* then).
+      AGENTSKILLS_FULL_CPT_TRAIN:    "${AGENTSKILLS_FULL_CPT_TRAIN:-/data/full_cpt_v2/stage1/train.parquet}"
+      AGENTSKILLS_FULL_CPT_VAL:      "${AGENTSKILLS_FULL_CPT_VAL:-/data/full_cpt_v2/stage1/val.parquet}"
+      AGENTSKILLS_FULL_CPT_TEST:     "${AGENTSKILLS_FULL_CPT_TEST:-/data/full_cpt_v2/stage1/test.parquet}"
+      AGENTSKILLS_HCL_TRAIN:         "${AGENTSKILLS_HCL_TRAIN:-/data/adapted/hcl/train.parquet}"
+      AGENTSKILLS_HCL_VAL:           "${AGENTSKILLS_HCL_VAL:-/data/adapted/hcl/val.parquet}"
+      AGENTSKILLS_HCL_TEST:          "${AGENTSKILLS_HCL_TEST:-/data/adapted/hcl/test.parquet}"
       AGENTSKILLS_PHASE1_ADAPTER:    "${AGENTSKILLS_PHASE1_ADAPTER:-}"
       AGENTSKILLS_PHASE2_ADAPTER:    "${AGENTSKILLS_PHASE2_ADAPTER:-}"
       AGENTSKILLS_SFT_ADAPTER:       "${AGENTSKILLS_SFT_ADAPTER:-}"
-      AGENTSKILLS_SFT_MAL_TRAIN:     "${AGENTSKILLS_SFT_MAL_TRAIN:-/data/sft/malicious/train.parquet}"
-      AGENTSKILLS_SFT_MAL_VAL:       "${AGENTSKILLS_SFT_MAL_VAL:-/data/sft/malicious/val.parquet}"
-      AGENTSKILLS_SFT_MAL_TEST:      "${AGENTSKILLS_SFT_MAL_TEST:-/data/sft/malicious/test.parquet}"
-      AGENTSKILLS_SFT_ALIGN_TRAIN:   "${AGENTSKILLS_SFT_ALIGN_TRAIN:-/data/sft/alignment/train.parquet}"
-      AGENTSKILLS_SFT_ALIGN_VAL:     "${AGENTSKILLS_SFT_ALIGN_VAL:-/data/sft/alignment/val.parquet}"
-      AGENTSKILLS_SFT_ALIGN_TEST:    "${AGENTSKILLS_SFT_ALIGN_TEST:-/data/sft/alignment/test.parquet}"
-      AGENTSKILLS_INFER_TEST:        "${AGENTSKILLS_INFER_TEST:-/data/sft/malicious/test.parquet}"
+      AGENTSKILLS_SFT_MAL_TRAIN:     "${AGENTSKILLS_SFT_MAL_TRAIN:-/data/adapted/sft_malicious/train.parquet}"
+      AGENTSKILLS_SFT_MAL_VAL:       "${AGENTSKILLS_SFT_MAL_VAL:-/data/adapted/sft_malicious/val.parquet}"
+      AGENTSKILLS_SFT_MAL_TEST:      "${AGENTSKILLS_SFT_MAL_TEST:-/data/adapted/sft_malicious/test.parquet}"
+      AGENTSKILLS_SFT_ALIGN_TRAIN:   "${AGENTSKILLS_SFT_ALIGN_TRAIN:-/data/adapted/sft_align/train.parquet}"
+      AGENTSKILLS_SFT_ALIGN_VAL:     "${AGENTSKILLS_SFT_ALIGN_VAL:-/data/adapted/sft_align/val.parquet}"
+      AGENTSKILLS_SFT_ALIGN_TEST:    "${AGENTSKILLS_SFT_ALIGN_TEST:-/data/adapted/sft_align/test.parquet}"
+      AGENTSKILLS_INFER_TEST:        "${AGENTSKILLS_INFER_TEST:-/data/adapted/sft_malicious/test.parquet}"
       AGENTSKILLS_INFER_PREDS:       "${AGENTSKILLS_INFER_PREDS:-}"
       AGENTSKILLS_INFER_METRICS:     "${AGENTSKILLS_INFER_METRICS:-}"
       AGENTSKILLS_BACKBONE:          "${AGENTSKILLS_BACKBONE:-Foundation-Sec-8B-Reasoning}"
