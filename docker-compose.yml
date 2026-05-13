@@ -47,6 +47,10 @@ services:
       AGENTSKILLS_INFER_PREDS:       "${AGENTSKILLS_INFER_PREDS:-}"
       AGENTSKILLS_INFER_METRICS:     "${AGENTSKILLS_INFER_METRICS:-}"
       AGENTSKILLS_BACKBONE:          "${AGENTSKILLS_BACKBONE:-Foundation-Sec-8B-Reasoning}"
+      # Multi-GPU launcher control. Unset = auto-detect (torchrun on all
+      # visible GPUs for trainer scripts; single-process for everything
+      # else). Set to a positive int to override — 1 forces single-process.
+      AGENTSKILLS_NPROC:             "${AGENTSKILLS_NPROC:-}"
     volumes:
       - ${AGENTSKILLS_DATA_HOST:-./inputs}:/data:ro
       - ${AGENTSKILLS_OUTPUTS_HOST:-./outputs}:/app/outputs

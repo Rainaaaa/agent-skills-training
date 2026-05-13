@@ -422,3 +422,11 @@ The same trick is used in agent-skills-collection / -scanning /
 - **Lean checkpoints in HCL.** Phase 2 only writes the LoRA adapter
   plus a tiny `hcl_head.pt` (temperature, bias, optional projection),
   not the full base every save.
+- **Auto multi-GPU.** The docker entrypoint inspects
+  `torch.cuda.device_count()` and launches trainer scripts
+  (`stages/*/train.py`) under `torchrun --standalone --nproc_per_node=$N`
+  when ≥2 GPUs are visible. Inference / eval stay single-process. Override
+  with `AGENTSKILLS_NPROC=<int>` in the env (e.g. `1` to force
+  single-process). Effective batch =
+  `per_device_batch × world_size × grad_accum` — see
+  `KELLY_IT_HANDOFF.md §5` "Scaling to multi-GPU" for the rescale table.

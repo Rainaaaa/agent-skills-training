@@ -239,6 +239,65 @@ override one of:
 mirroring HCL's; that's tracked as a follow-up. Until it lands, override
 the schedule explicitly when chaining sub-stages.)
 
+### Scaling to multi-GPU
+
+The docker entrypoint **auto-detects visible GPUs** and launches trainer
+scripts (`stages/*/train.py`) under `torchrun --standalone --nproc_per_node=$N`
+when `$N >= 2`. Single-GPU hosts and the non-trainer scripts
+(`inference.py`, `eval_baseline.py`) stay single-process. Nothing to do
+on a multi-GPU host beyond pointing `--gpus all` (already the default in
+`docker-compose.yml`).
+
+Inspect the launcher line at the top of any trainer's stdout to confirm:
+
+```
+[entrypoint] DDP launch: torchrun --standalone --nproc_per_node=4 -m stages.pretraining.train ...
+```
+
+**Manual override** — set `AGENTSKILLS_NPROC` in `.env` or the shell:
+
+| Value | Effect |
+|---|---|
+| unset (default) | auto-detect; trainers use all visible GPUs, others single-process |
+| `1` | force single-process even on a multi-GPU host (useful for debugging) |
+| `<int> ≥ 2` | use exactly that many GPUs (e.g. `2` on an 8-GPU host) |
+| `CUDA_VISIBLE_DEVICES=0,1` (separate var) | restrict which GPUs are visible; auto-detect then sees 2 |
+
+**Effective batch size** is what the optimizer actually sees per step:
+
+```
+effective_batch = per_device_train_batch_size × world_size × gradient_accumulation_steps
+```
+
+The Jetstream validation used `per_device_train_batch_size=1`,
+`gradient_accumulation_steps=4`, 2 GPUs → effective batch **8**. To
+preserve that on a different GPU count:
+
+| GPUs | `per_device_train_batch_size` | `gradient_accumulation_steps` | Effective batch |
+|------|-------------------------------|-------------------------------|-----------------|
+| 1    | 1                             | 8                             | 8 |
+| 2    | 1                             | 4                             | 8 (validated)   |
+| 4    | 1                             | 2                             | 8 |
+| 8    | 1                             | 1                             | 8 |
+| 8    | 2                             | 1                             | 16 (need LR rescale) |
+
+If you let effective batch *grow* (e.g. keep `grad_accum=4` on 8 GPUs →
+effective batch 32), rescale `training.learning_rate` proportionally —
+linear-scale (×4) is the default heuristic.
+
+**Memory headroom on bigger cards** — if you have ≥40 GB VRAM per GPU
+and don't need 8-bit quantization for the chosen backbone, the
+following two flips give a noticeable wall-clock win for real training
+runs:
+
+```
+model.gradient_checkpointing=false         # ~30% throughput win
+model.quantization=null                    # drop 8-bit base; bf16 LoRA fits in 40GB
+```
+
+(Both stay ON by default for safety on smaller cards; flip per-config or
+per-CLI when you know your VRAM budget.)
+
 ---
 
 ## 6. Stages 2 & 3 against legacy pre-refactor data (smoke only)
