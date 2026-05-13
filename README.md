@@ -34,6 +34,13 @@ All three stages consume datasets produced by
 | hcl            | `pl_hcl/<v>/<stage>/<split>{,_t*}.parquet`                |
 | downstream sft | scanner-labeled or human-reviewed CSV/parquet             |
 
+`<stage>` for **pretraining** and **hcl** is one of `stage1` or `stage2` —
+both trainers run as a **two-sub-stage continual curriculum**
+(metadata-only @ `max_seq_length=4096` → all files @ `max_seq_length=10240`,
+with sub-stage 2 resuming from sub-stage 1's checkpoint). See
+[Two-substage continual training](#two-substage-continual-training) below.
+SFT has no sub-stages.
+
 ## Layout
 
 ```
@@ -185,6 +192,79 @@ python -m stages.downstream.eval_baseline \
 
 See [`stages/downstream/README.md`](stages/downstream/README.md).
 
+## Two-substage continual training
+
+**Stage 1 (CPT)** and **Stage 2 (HCL)** are each delivered as a
+two-sub-stage **continual** curriculum. On disk both `full_cpt_v2/` and
+`pl_hcl/pl_hcl_v1/` contain `stage1/` and `stage2/` subdirectories:
+
+| Sub-stage | Data                                          | `max_seq_length` |
+| --------- | --------------------------------------------- | ---------------- |
+| 1         | metadata + instructions only                  | 4096             |
+| 2         | all files (incl. full code/content), **continues from 1** | 10240 |
+
+Sub-stage 2 is *not* an independent run on a fresh base — it loads
+sub-stage 1's last checkpoint via `run.resume_from_checkpoint` and
+continues training with the new (longer-context, larger-content) data.
+The dataloader rebuilds with the new `data.train_file` and the new
+`data.max_seq_length`; the LoRA adapter, tokenizer, and optimizer
+state carry over from sub-stage 1.
+
+Stage 3 (SFT) has no sub-stages — single train/val/test pass.
+
+### CPT sub-stage 1 → sub-stage 2
+
+```bash
+# sub-stage 1: metadata @ 4096
+docker compose run --rm pretraining stages/pretraining/train.py \
+    --config stages/pretraining/configs/full_cpt_v1_quarter.yaml \
+    run.run_name=cpt_substage1 \
+    data.train_file=/data/full_cpt_v2/stage1/train.parquet \
+    data.validation_file=/data/full_cpt_v2/stage1/val.parquet \
+    data.test_file=/data/full_cpt_v2/stage1/test.parquet \
+    data.max_seq_length=4096
+
+# sub-stage 2: all files @ 10240, continues from sub-stage 1
+docker compose run --rm pretraining stages/pretraining/train.py \
+    --config stages/pretraining/configs/full_cpt_v1_quarter.yaml \
+    run.run_name=cpt_substage2 \
+    run.resume_from_checkpoint=/app/outputs/runs/<model>/cpt_substage1/checkpoint-<N> \
+    data.train_file=/data/full_cpt_v2/stage2/train.parquet \
+    data.validation_file=/data/full_cpt_v2/stage2/val.parquet \
+    data.test_file=/data/full_cpt_v2/stage2/test.parquet \
+    data.max_seq_length=10240
+```
+
+HCL stage1 → stage2 follows the same pattern under
+`stages/hcl/configs/` and `pl_hcl/pl_hcl_v1/{stage1,stage2}/`.
+
+### Controlling the training-data fraction independently of eval
+
+`data.train_fraction`, `data.validation_fraction`, and
+`data.test_fraction` are independent knobs. To train on half the rows
+while keeping the full validation and test splits, set only
+`train_fraction`:
+
+```bash
+... data.train_fraction=0.5
+```
+
+`1.0` or omitted both mean "use all rows" — only fractions in `(0, 1)`
+shrink a split (`common/data.py:subsample_splits`). Absolute caps with
+`max_train_rows` / `max_validation_rows` / `max_test_rows` work in
+parallel; when both a fraction and a cap apply, the smaller wins.
+
+### LR-schedule heads-up
+
+`resume_from_checkpoint` restores the optimizer + scheduler state
+alongside the LoRA weights. With the default `cosine` schedule the LR
+has decayed near zero by the end of sub-stage 1, so sub-stage 2 needs
+either `training.num_train_epochs=<higher>` (extends the cosine past
+sub-stage 1's endpoint) or `training.lr_scheduler_type=constant`
+(ignore the inherited schedule). A cleaner fix would be adding a
+CPT-side `model.phase1_adapter_path` knob mirroring HCL's, which loads
+the adapter onto a fresh base + fresh optimizer; tracked as a follow-up.
+
 ## Extending the pipeline
 
 ### Add a new SFT task
@@ -249,24 +329,31 @@ path:
 
 ```
 agentskills-data/                       # unzip here on the remote host
-├── full_cpt/
-│   ├── train.parquet                   # Phase 1 CPT splits
-│   ├── val.parquet
-│   └── test.parquet
-├── pl_hcl/
-│   ├── pairs_train.parquet             # Phase 2 HCL pair splits
-│   ├── pairs_val.parquet
-│   └── pairs_test.parquet
-├── sft/
-│   ├── malicious_train.parquet         # Stage 3 SFT splits (per task)
-│   ├── malicious_val.parquet
-│   ├── malicious_test.parquet
-│   └── misalignment_*.parquet
-├── real_world_eval/                    # human-reviewed corpus for inference
-│   └── eval.parquet
+├── full_cpt_v2/                        # Stage 1 (CPT) — two sub-stages
+│   ├── stage1/                         # metadata + instructions; train @ max_seq_length=4096
+│   │   ├── train.parquet
+│   │   ├── val.parquet
+│   │   ├── test.parquet
+│   │   └── unseen.parquet
+│   └── stage2/                         # all files; continual-train @ max_seq_length=10240
+│       └── {train,val,test,unseen}.parquet
+├── pl_hcl/pl_hcl_v1/                   # Stage 2 (HCL pairs) — same two-sub-stage shape
+│   ├── stage1/                         # metadata-pair anchors @ 4096
+│   │   ├── {train,val,test,unseen}.parquet
+│   │   └── {train,val,test,unseen}_t{1,2,3a,3b,3c}.parquet   # per-strategy splits
+│   └── stage2/                         # all-files-pair anchors @ 10240
+│       └── ...                         # (same shape as stage1)
+├── sft/sft_v1/                         # Stage 3 (SFT) — no sub-stages
+│   ├── classifier_{train,val,test}.parquet
+│   └── sft_{train,val,test}.jsonl
+├── adapted/                            # optional, legacy→new schema for smoke runs (see KELLY_IT_HANDOFF.md §6)
+│   └── {hcl,sft_align,sft_malicious}/{train,val,test}.parquet
 └── models/                             # optional, see "Backbone weights" below
     └── Foundation-Sec-8B-Reasoning/
 ```
+
+See [Two-substage continual training](#two-substage-continual-training)
+above for what `stage1/` vs `stage2/` mean and how to chain them.
 
 ### On the remote machine
 
