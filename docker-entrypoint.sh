@@ -6,6 +6,11 @@
 #   docker run --rm --gpus all agent-skills-training stages/downstream/sft/train.py --help
 #   docker run --rm --gpus all agent-skills-training stages/downstream/inference.py --help
 #   docker run --rm --gpus all agent-skills-training stages/downstream/eval_baseline.py --help
+#
+# Trainer scripts (*/train.py) auto-launch under torchrun when >1 GPU is
+# visible; everything else stays single-process. Override with
+# AGENTSKILLS_NPROC=<int> in the env (e.g. AGENTSKILLS_NPROC=1 to force
+# single-process even on a multi-GPU host).
 set -euo pipefail
 
 if [ "$#" -eq 0 ]; then
@@ -36,6 +41,14 @@ Required mounts:
   -v <dataset_root>:/data                               # training data
   -v <model_path.json>:/app/model_path.json:ro          # model registry
 
+Multi-GPU (trainer scripts only):
+  Trainer scripts (*/train.py) auto-detect visible GPUs and launch under
+  torchrun when count >= 2. Inference / eval scripts always stay
+  single-process (they're not DDP-aware and would duplicate work).
+  Override: AGENTSKILLS_NPROC=<int>   # 1 forces single-process;
+                                      # any other positive int picks that
+                                      # nproc_per_node explicitly.
+
 Pass overrides on the CLI:
   ... stages/pretraining/train.py --config foo.yaml training.max_steps=20
 EOF
@@ -43,17 +56,46 @@ EOF
     ;;
 esac
 
-# Path ending in .py → python -m the dotted module; everything else exec'd.
 script="$1"; shift
-if [[ "$script" == *.py ]]; then
-  if [ -f "/app/$script" ]; then
-    cd /app
-    # Convert path "stages/foo/bar.py" → module "stages.foo.bar" so the
-    # package imports inside (e.g. `from common.config import …`) work.
-    module="$(echo "${script%.py}" | tr '/' '.')"
-    exec python -u -m "$module" "$@"
-  fi
+
+# Non-python targets are exec'd verbatim (rare, but supported for ad-hoc
+# tools shipped inside the image).
+if [[ "$script" != *.py ]]; then
+  exec "$script" "$@"
+fi
+
+if [ ! -f "/app/$script" ]; then
   echo "[entrypoint] python script not found: $script" >&2
   exit 64
 fi
-exec "$script" "$@"
+
+cd /app
+# Convert path "stages/foo/bar.py" → module "stages.foo.bar" so the package
+# imports inside (e.g. `from common.config import …`) work.
+module="$(echo "${script%.py}" | tr '/' '.')"
+
+# Determine launch mode:
+#   1. AGENTSKILLS_NPROC overrides everything (must be a positive int).
+#   2. For trainer scripts (*/train.py), auto-detect via
+#      torch.cuda.device_count() — honors CUDA_VISIBLE_DEVICES.
+#   3. Everything else stays single-process.
+nproc=""
+if [ -n "${AGENTSKILLS_NPROC:-}" ]; then
+  nproc="$AGENTSKILLS_NPROC"
+elif [[ "$script" == */train.py ]]; then
+  nproc="$(python -c 'import torch; print(torch.cuda.device_count())' 2>/dev/null || echo 1)"
+fi
+: "${nproc:=1}"
+
+if ! [[ "$nproc" =~ ^[0-9]+$ ]] || [ "$nproc" -lt 1 ]; then
+  echo "[entrypoint] invalid AGENTSKILLS_NPROC=$nproc; must be a positive integer" >&2
+  exit 64
+fi
+
+if [ "$nproc" -gt 1 ]; then
+  echo "[entrypoint] DDP launch: torchrun --standalone --nproc_per_node=$nproc -m $module $*"
+  exec torchrun --standalone --nproc_per_node="$nproc" -m "$module" "$@"
+fi
+
+echo "[entrypoint] single-process launch: python -m $module $*"
+exec python -u -m "$module" "$@"

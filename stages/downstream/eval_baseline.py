@@ -126,12 +126,28 @@ def main() -> None:
             f"eval_split={eval_split!r} not in dataset; available={list(raw_datasets)}"
         )
 
+    # Baseline eval only touches `eval_split` — drop the others before
+    # tokenization so we don't waste minutes packing a 100K-row train split
+    # the Trainer will never read. (Was a noticeable cost in the
+    # full-eval-orchestrator pre/post-CPT baseline pairs.)
+    for split in list(raw_datasets.keys()):
+        if split != eval_split:
+            del raw_datasets[split]
+
     corpus_stats = compute_corpus_stats(
         {eval_split: raw_datasets[eval_split]}, text_column=text_column
     )
     tokenized = tokenize_and_pack(raw_datasets, tokenizer, data_cfg)
 
     model = load_causal_lm(model_cfg, num_added)
+    # Optional: load a trained LoRA adapter on top of the base for
+    # post-training intrinsic eval (e.g. measure perplexity *after* CPT).
+    # Empty / unset → eval the raw backbone (pre-training baseline).
+    adapter_path = model_cfg.get("adapter_path")
+    if adapter_path:
+        from peft import PeftModel
+        LOGGER.info("Attaching adapter from %s", adapter_path)
+        model = PeftModel.from_pretrained(model, adapter_path, is_trainable=False)
     model.config.use_cache = False  # eval only; turn off KV cache for memory
 
     # Eval-only run; force eval_strategy="no" to suppress trainer's mid-train logic.
