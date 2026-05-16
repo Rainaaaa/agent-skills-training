@@ -1,0 +1,78 @@
+# LP-HCL Phase 2 on 1/4 of pl_hcl_v2 (challenge-skill-scrubbed), one full epoch.
+#
+# CRITICAL difference from lp_hcl_v1_quarter.yaml:
+#   - data files now point at pl_hcl/pl_hcl_v2/stage{1,2}/pairs_<split>.parquet
+#   - these are the JOINED pair files produced by
+#     agent-skills-preparation/pipeline/build_hcl_pairs.py
+#     (the trainer needs anchor_text + pair_text + pair_kind columns —
+#      the original per-task tN files don't have them side-by-side)
+#
+# Stage1 by default (seq=1024); switch to stage2 for the longer M+I+R views.
+
+run:
+  output_root: ${AGENTSKILLS_PREPARED_ROOT:-./inputs}/runs
+  run_name: lp_hcl_q025_2gpu_fa2
+  experiment_name: lp_hcl_v2_q025_2gpu_fa2_stage1
+  seed: 42
+  log_level: INFO
+  auto_resume: true
+  resume_from_checkpoint: null
+  train_eval_at_epoch_end: false
+
+data:
+  train_file:      ${AGENTSKILLS_PREPARED_ROOT:-./inputs}/pl_hcl/pl_hcl_v2/stage1/pairs_train.parquet
+  validation_file: ${AGENTSKILLS_PREPARED_ROOT:-./inputs}/pl_hcl/pl_hcl_v2/stage1/pairs_val.parquet
+  test_file:       ${AGENTSKILLS_PREPARED_ROOT:-./inputs}/pl_hcl/pl_hcl_v2/stage1/pairs_test.parquet
+  anchor_column: anchor_text
+  pair_column: pair_text
+  label_column: label
+  pair_kind_column: pair_kind
+  anchor_stage_column: anchor_stage
+  pair_stage_column: pair_stage
+  max_seq_length: 1024
+  preprocessing_num_workers: 8
+  train_fraction: 0.25
+  validation_fraction: 0.25
+  test_fraction: 0.25
+
+model:
+  name: Foundation-Sec-8B-Reasoning
+  phase1_adapter_path: ${AGENTSKILLS_PHASE1_ADAPTER:-./outputs/phase1/final_model}
+  merge_phase1_adapter: true
+  tokenizer_name_or_path: null
+  trust_remote_code: false
+  attn_implementation: flash_attention_2
+  torch_dtype: bfloat16
+  gradient_checkpointing: true
+  use_lora: true
+  lora:
+    r: 8
+    alpha: 16
+    dropout: 0.05
+    bias: none
+    target_modules: [q_proj, v_proj]
+  hcl:
+    pooling: last_token
+    proj_dim: null
+    init_temperature: 0.07
+    pair_kind_weights: [1.0, 1.0, 1.5]   # [positive, corrupted, swapped] — bias toward hardest negs
+    ce_loss_weight: 0.0
+
+training:
+  num_train_epochs: 1
+  per_device_train_batch_size: 4
+  per_device_eval_batch_size: 8
+  gradient_accumulation_steps: 4
+  learning_rate: 2.0e-4
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.03
+  weight_decay: 0.0
+  bf16: true
+  logging_steps: 20
+  eval_fraction_of_epoch: 0.25
+  save_fraction_of_epoch: 0.05
+  save_total_limit: 6
+  report_to: [tensorboard]
+  dataloader_num_workers: 2
+  remove_unused_columns: false
+  ddp_find_unused_parameters: false

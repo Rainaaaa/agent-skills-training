@@ -1,0 +1,46 @@
+# Inference + classification metrics on the human-reviewed challenge set
+# (gold-label EVAL-ONLY corpus produced by
+#  agent-skills-preparation/pipeline/build_sft_challenge.py).
+#
+# Dataset:
+#   /data/sft/challenge/classifier_test.parquet
+# Schema:
+#   skill_text       (str) — rendered SKILL package contents
+#   alignment_class  (str) — "ALIGNED" or "MISALIGNED"  (gold)
+# The inference loop reads `skill_text`, wraps it in misalignment_detection's
+# prompt template, constrained-decodes to {"aligned","misaligned"}, and
+# scores against `alignment_class`.
+#
+# Use this AFTER training on sft_v2 to evaluate the SFT-trained adapter on
+# the gold human-reviewed corpus.
+
+run:
+  output_root: "${AGENTSKILLS_TRAIN_OUTPUT_ROOT:-./outputs/runs}"
+  run_name: infer_misalignment_challenge
+  log_level: INFO
+
+data:
+  task: misalignment_detection
+  test_file: "${AGENTSKILLS_SFT_CHALLENGE_TEST:-/data/sft/challenge/classifier_test.parquet}"
+  max_rows: 0       # 0 = use all 1,444 rows
+
+model:
+  name: "${AGENTSKILLS_BACKBONE:-Foundation-Sec-8B-Reasoning}"
+  # Required: the SFT-trained adapter from sft_v2 training. Leave empty to
+  # baseline-score the raw backbone (expect near-chance F1).
+  adapter_path: "${AGENTSKILLS_SFT_ADAPTER:-}"
+  tokenizer_name_or_path: null
+  trust_remote_code: false
+  attn_implementation: sdpa
+  torch_dtype: bfloat16
+
+inference:
+  batch_size: 8
+  max_new_tokens: 8
+  # constrain_vocab=true scores each response in task.response_vocab and
+  # picks argmax — recommended for one-word answers (no decoder noise).
+  constrain_vocab: true
+
+output:
+  predictions_jsonl: "${AGENTSKILLS_INFER_PREDS:-}"   # default: <output_dir>/predictions_misalignment_detection.jsonl
+  metrics_json:      "${AGENTSKILLS_INFER_METRICS:-}" # default: <output_dir>/metrics_misalignment_detection.json

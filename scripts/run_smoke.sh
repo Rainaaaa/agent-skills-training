@@ -32,7 +32,7 @@ CONDA_BASE=/N/slate/cz1/miniconda3
 CONDA_ENV_PATH=/N/slate/cz1/conda/envs/AgentSkillsOSS
 DATA_ROOT=/N/project/AdversarialModeling/datasets/agent_skills/misalignment
 
-CPT_DATA_DIR="${DATA_ROOT}/full_cpt/full_cpt_v2/stage1"
+CPT_DATA_DIR="${DATA_ROOT}/full_cpt/full_cpt_v3/stage1"   # challenge-scrubbed v3
 
 # ----- env setup -----
 mkdir -p "${REPO_ROOT}/log" "${REPO_ROOT}/outputs/runs"

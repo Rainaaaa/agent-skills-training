@@ -83,10 +83,10 @@ NAME_SFT_MAL="sft_malicious"
 NAME_EVAL_SFT_ALIGN="eval_sft_misalignment"
 NAME_EVAL_SFT_MAL="eval_sft_malicious"
 
-# Data paths inside the container.
-CPT_DATA_DIR=/data/full_cpt_v2/stage1
-ALIGN_TEST=/data/adapted/sft_align/test.parquet
-MAL_TEST=/data/adapted/sft_malicious/test.parquet
+# Data paths inside the container (challenge-scrubbed v3 / v2 layout).
+CPT_DATA_DIR=/data/full_cpt/full_cpt_v3/stage1
+ALIGN_TEST=/data/sft/challenge/classifier_test.parquet
+MAL_TEST=/data/sft/sft_v2/classifier_test.parquet
 
 host_dir() { echo "$AGENTSKILLS_OUTPUTS_HOST/runs/$1/$2"; }
 in_dir()   { echo "/app/outputs/runs/$1/$2"; }
@@ -189,7 +189,7 @@ step_cpt() {
   local marker="$(host_dir "$model" "$NAME_CPT")/final_model"
   already_done "$marker" "CPT $NAME_CPT" && return 0
   echo "    [run]  CPT sub-stage 1"
-  # full_cpt_v1_quarter.yaml is tuned for the IU BR200 cluster:
+  # full_cpt_v3_quarter.yaml is tuned for the IU BR200 cluster:
   #   - output_root uses ${AGENTSKILLS_PREPARED_ROOT:-./inputs}/runs
   #     (not a compose-forwarded env var → writes to /app/inputs/runs/)
   #   - attn_implementation=flash_attention_2 (flash-attn not in the stock image)
@@ -209,7 +209,7 @@ step_cpt() {
   overrides+=("${SMOKE_TRAIN_OPTS[@]}")
   docker compose run --rm pretraining \
       stages/pretraining/train.py \
-      --config stages/pretraining/configs/full_cpt_v1_quarter.yaml \
+      --config stages/pretraining/configs/full_cpt_v3_quarter.yaml \
       "${overrides[@]}"
 }
 

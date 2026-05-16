@@ -1,0 +1,62 @@
+# Full CPT on 1/2 of Phase 1 v3 (challenge-skill-scrubbed), one full epoch.
+#
+# Mirrors full_cpt_v1_half.yaml but targets the stage-partitioned v3 dataset.
+# Stage1 (M+I, seq=2048) by default; flip the data.* paths for stage2 (seq=10240).
+#
+# Forecast: ~25-33h with flash-attn on 2 GPUs (well under 48h walltime).
+
+run:
+  output_root: ${AGENTSKILLS_PREPARED_ROOT:-./inputs}/runs
+  run_name: lora_h050_2gpu_fa2
+  experiment_name: full_cpt_v3_lora_h050_2gpu_fa2_stage1
+  seed: 42
+  log_level: INFO
+  auto_resume: true
+  resume_from_checkpoint: null
+  train_eval_at_epoch_end: false
+
+data:
+  train_file:      ${AGENTSKILLS_PREPARED_ROOT:-./inputs}/full_cpt/full_cpt_v3/stage1/train.parquet
+  validation_file: ${AGENTSKILLS_PREPARED_ROOT:-./inputs}/full_cpt/full_cpt_v3/stage1/val.parquet
+  test_file:       ${AGENTSKILLS_PREPARED_ROOT:-./inputs}/full_cpt/full_cpt_v3/stage1/test.parquet
+  text_column: text
+  line_by_line: false
+  max_seq_length: 2048
+  preprocessing_num_workers: 8
+  train_fraction: 0.5
+  max_validation_rows: 2000
+  max_test_rows: 2000
+
+model:
+  name: Foundation-Sec-8B-Reasoning
+  tokenizer_name_or_path: null
+  trust_remote_code: false
+  attn_implementation: flash_attention_2
+  torch_dtype: bfloat16
+  gradient_checkpointing: true
+  use_lora: true
+  lora:
+    r: 8
+    alpha: 16
+    dropout: 0.05
+    bias: none
+    target_modules: [q_proj, v_proj]
+
+training:
+  num_train_epochs: 1
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 4
+  learning_rate: 2.0e-4
+  lr_scheduler_type: cosine
+  warmup_ratio: 0.03
+  weight_decay: 0.0
+  bf16: true
+  logging_steps: 20
+  eval_fraction_of_epoch: 0.25
+  save_fraction_of_epoch: 0.05
+  save_total_limit: 6
+  report_to: [tensorboard]
+  dataloader_num_workers: 2
+  remove_unused_columns: false
+  ddp_find_unused_parameters: false

@@ -24,10 +24,14 @@ LOGGER = logging.getLogger(__name__)
 
 PAIR_KIND_TO_ID: Dict[str, int] = {"positive": 0, "corrupted": 1, "swapped": 2}
 STAGE_TO_ID: Dict[str, int] = {
+    # Legacy layer-level naming (kept for back-compat with earlier prep builds):
     "stage_name": 0,
     "stage_description": 1,
     "stage_markdown": 2,
     "stage_files": 3,
+    # Data-vintage stages emitted by current prep (full_cpt_v3 / pl_hcl_v2):
+    "stage1": 4,    # METADATA + INSTRUCTION  (~4K-token view)
+    "stage2": 5,    # METADATA + INSTRUCTION + RESOURCE  (~10K-token view)
 }
 
 

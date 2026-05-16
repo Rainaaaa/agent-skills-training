@@ -21,7 +21,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PHASE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 LAUNCHER="${SCRIPT_DIR}/run_full_cpt.sh"
 
-DEFAULT_CONFIG="${PHASE_ROOT}/configs/full_cpt_v1_quarter.yaml"
+DEFAULT_CONFIG="${PHASE_ROOT}/configs/full_cpt_v3_quarter.yaml"
 CONFIG="${1:-${DEFAULT_CONFIG}}"
 [[ "${CONFIG}" == "-" ]] && CONFIG="${DEFAULT_CONFIG}"
 shift || true

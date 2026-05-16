@@ -28,21 +28,30 @@ pulled from HuggingFace.
 /opt/agentskills/                              # or wherever you check the repos out
 ├── agent-skills-training/                     # this repo
 └── data/
-    ├── full_cpt_v2/                           # Stage 1 (CPT) parquets
+    ├── full_cpt/full_cpt_v3/                  # Stage 1 (CPT) — challenge-scrubbed
     │   ├── stage1/{train,val,test,unseen}.parquet
     │   └── stage2/{train,val,test,unseen}.parquet
-    ├── pl_hcl/pl_hcl_v1/                      # Stage 2 (HCL pairs) parquets
-    │   └── stage{1,2}/{train,val,test,...}.parquet
-    ├── sft/sft_v1/                            # Stage 3 (SFT) parquets + jsonl
-    │   ├── classifier_{train,val,test}.parquet
-    │   └── sft_{train,val,test}.jsonl
-    └── adapted/                               # OPTIONAL: legacy-schema → new-schema
-                                               # only needed if you must run stages 2/3
-                                               # on legacy data; see §6.
+    ├── pl_hcl/pl_hcl_v2/                      # Stage 2 (HCL) — challenge-scrubbed
+    │   ├── stage1/pairs_{train,val,test,unseen}.parquet    # JOINED pair files
+    │   └── stage2/pairs_{train,val,test,unseen}.parquet
+    └── sft/                                   # Stage 3 (SFT)
+        ├── sft_v2/                            #   description-matching, scrubbed
+        │   ├── classifier_{train,val,test}.parquet
+        │   └── sft_{train,val,test}.jsonl
+        └── challenge/                         #   gold-label misalignment eval set
+            ├── classifier_test.parquet         #   EVAL-ONLY (all 1,444 rows in one file)
+            └── sft_test.jsonl                  #   EVAL-ONLY (chat-format alternative)
 ```
 
-**Two-substage continual training (CPT + HCL).** Both `full_cpt_v2/` and
-`pl_hcl/pl_hcl_v1/` are split on disk into `stage1/` and `stage2/`:
+> **HCL path note**: `stages/hcl/data.py` needs `anchor_text` + `pair_text` +
+> `pair_kind` columns side-by-side. Those live in `pairs_*.parquet` only
+> (built by agent-skills-preparation/pipeline/build_hcl_pairs.py). The
+> sibling `{train,val,test}.parquet` and `*_t{1,2,3a,3b,3c}.parquet`
+> files in the same dirs are SINGLE-VIEW intermediates — do **not** point
+> the HCL trainer at them, it will fail with a column-not-found error.
+
+**Two-substage continual training (CPT + HCL).** Both `full_cpt_v3/` and
+`pl_hcl/pl_hcl_v2/` are split on disk into `stage1/` and `stage2/`:
 
 - `stage1/` — metadata + instructions only. Train at `max_seq_length=4096`.
 - `stage2/` — all files (incl. full code/content). **Continual-train**
@@ -50,7 +59,7 @@ pulled from HuggingFace.
   sub-stage 1's last checkpoint via `run.resume_from_checkpoint`, not a
   fresh base. See §5 for the run-it-twice commands.
 
-`sft/sft_v1/` has no sub-stages; SFT is a single train/val/test pass.
+`sft/sft_v2/` and `sft/challenge/` have no sub-stages; SFT is a single train/val/test pass.
 
 The compose file expects exactly **two** host paths set via env (or `.env`):
 
@@ -143,22 +152,22 @@ checkpoint. SFT (Stage 3) has no sub-stages.
 # sub-stage 1: metadata @ 4096
 docker compose run --rm pretraining \
     stages/pretraining/train.py \
-    --config stages/pretraining/configs/full_cpt_v1_quarter.yaml \
+    --config stages/pretraining/configs/full_cpt_v3_quarter.yaml \
     run.run_name=cpt_substage1 \
-    data.train_file=/data/full_cpt_v2/stage1/train.parquet \
-    data.validation_file=/data/full_cpt_v2/stage1/val.parquet \
-    data.test_file=/data/full_cpt_v2/stage1/test.parquet \
+    data.train_file=/data/full_cpt/full_cpt_v3/stage1/train.parquet \
+    data.validation_file=/data/full_cpt/full_cpt_v3/stage1/val.parquet \
+    data.test_file=/data/full_cpt/full_cpt_v3/stage1/test.parquet \
     data.max_seq_length=4096
 
 # sub-stage 2: all files @ 10240, continues from sub-stage 1
 docker compose run --rm pretraining \
     stages/pretraining/train.py \
-    --config stages/pretraining/configs/full_cpt_v1_quarter.yaml \
+    --config stages/pretraining/configs/full_cpt_v3_quarter.yaml \
     run.run_name=cpt_substage2 \
     run.resume_from_checkpoint=/app/outputs/runs/Foundation-Sec-8B-Reasoning/cpt_substage1/checkpoint-<N> \
-    data.train_file=/data/full_cpt_v2/stage2/train.parquet \
-    data.validation_file=/data/full_cpt_v2/stage2/val.parquet \
-    data.test_file=/data/full_cpt_v2/stage2/test.parquet \
+    data.train_file=/data/full_cpt/full_cpt_v3/stage2/train.parquet \
+    data.validation_file=/data/full_cpt/full_cpt_v3/stage2/val.parquet \
+    data.test_file=/data/full_cpt/full_cpt_v3/stage2/test.parquet \
     data.max_seq_length=10240
 ```
 
@@ -169,37 +178,66 @@ output dir (latest one is usually right; the trainer writes
 ### Stage 2 (HCL) — same pattern, chained onto CPT sub-stage 2's adapter
 
 ```bash
-# HCL sub-stage 1: chains on CPT sub-stage 2's adapter, metadata pairs @ 4096
+# HCL sub-stage 1: chains on CPT sub-stage 2's adapter, metadata pairs @ 1024
+#   NOTE: data files MUST be the joined pairs_*.parquet (anchor_text + pair_text
+#   + pair_kind columns), NOT the single-view train.parquet in the same dir.
 docker compose run --rm hcl \
     stages/hcl/train.py \
-    --config stages/hcl/configs/lp_hcl_v1_quarter.yaml \
+    --config stages/hcl/configs/lp_hcl_v2_quarter.yaml \
     run.run_name=hcl_substage1 \
     model.phase1_adapter_path=/app/outputs/runs/Foundation-Sec-8B-Reasoning/cpt_substage2/final_model \
-    data.train_file=/data/pl_hcl/pl_hcl_v1/stage1/train.parquet \
-    data.validation_file=/data/pl_hcl/pl_hcl_v1/stage1/val.parquet \
-    data.test_file=/data/pl_hcl/pl_hcl_v1/stage1/test.parquet \
-    data.max_seq_length=4096
+    data.train_file=/data/pl_hcl/pl_hcl_v2/stage1/pairs_train.parquet \
+    data.validation_file=/data/pl_hcl/pl_hcl_v2/stage1/pairs_val.parquet \
+    data.test_file=/data/pl_hcl/pl_hcl_v2/stage1/pairs_test.parquet \
+    data.max_seq_length=1024
 
 # HCL sub-stage 2: all-files pairs @ 10240, continues from HCL sub-stage 1
 docker compose run --rm hcl \
     stages/hcl/train.py \
-    --config stages/hcl/configs/lp_hcl_v1_quarter.yaml \
+    --config stages/hcl/configs/lp_hcl_v2_quarter.yaml \
     run.run_name=hcl_substage2 \
     run.resume_from_checkpoint=/app/outputs/runs/Foundation-Sec-8B-Reasoning/hcl_substage1/checkpoint-<N> \
-    data.train_file=/data/pl_hcl/pl_hcl_v1/stage2/train.parquet \
-    data.validation_file=/data/pl_hcl/pl_hcl_v1/stage2/val.parquet \
-    data.test_file=/data/pl_hcl/pl_hcl_v1/stage2/test.parquet \
+    data.train_file=/data/pl_hcl/pl_hcl_v2/stage2/pairs_train.parquet \
+    data.validation_file=/data/pl_hcl/pl_hcl_v2/stage2/pairs_val.parquet \
+    data.test_file=/data/pl_hcl/pl_hcl_v2/stage2/pairs_test.parquet \
     data.max_seq_length=10240
 ```
 
-### Stage 3 (SFT) — single pass, no sub-stages
+### Stage 3 (SFT misalignment) — single pass, no sub-stages
+
+**Train on the large scrubbed sft_v2 dataset** (heuristic labels, ~474K rows):
 
 ```bash
 docker compose run --rm sft-align \
     stages/downstream/sft/train.py \
     --config stages/downstream/configs/sft_misalignment_example.yaml \
-    run.run_name=sft_align_v1
+    run.run_name=sft_align_v2 \
+    data.train_file=/data/sft/sft_v2/classifier_train.parquet \
+    data.validation_file=/data/sft/sft_v2/classifier_val.parquet \
+    data.test_file=/data/sft/sft_v2/classifier_test.parquet
 ```
+
+### Stage 3b (Evaluation) — score the SFT-trained adapter on the GOLD challenge set
+
+The challenge set (`sft/challenge/classifier_test.parquet`, 1,444 rows) is
+**eval-only** — it contains every human-reviewed skill with the gold
+`alignment_class` label. Never used for training; reserved as the
+held-out evaluation corpus.
+
+```bash
+docker compose run --rm sft-align \
+    stages/downstream/inference.py \
+    --config stages/downstream/configs/inference_misalignment_challenge.yaml \
+    model.adapter_path=/app/outputs/runs/Foundation-Sec-8B-Reasoning/sft_align_v2/final_model
+```
+
+This writes `predictions_misalignment_detection.jsonl` + `metrics_misalignment_detection.json`
+(accuracy / precision / recall / F1 vs the gold labels) to the inference run's output dir.
+
+Both sft_v2 and challenge parquets carry `skill_text` + `alignment_class`
+columns, which is what `tasks/misalignment_detection.py` reads — so the
+same task module powers both training (on sft_v2) and evaluation
+(on challenge).
 
 ### Controlling the training-data fraction
 
