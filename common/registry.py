@@ -59,6 +59,11 @@ def _iter_entries(data: Dict[str, Any]) -> Iterator[Tuple[str, str, Entry]]:
     {"local": "...", "hf": "..."} — both are passed through to the resolver.
     """
     for category, models in data.items():
+        # Skip metadata keys: any top-level key that starts with `_` (e.g.
+        # `_doc`, `_schema_version`) is treated as a non-entry annotation
+        # so registry JSON files can carry inline documentation.
+        if isinstance(category, str) and category.startswith("_"):
+            continue
         if isinstance(models, dict) and not {"local", "hf"} & set(models.keys()):
             # Category dict: descend one level.
             for name, entry in models.items():
@@ -86,7 +91,13 @@ def _is_marker(value: Any) -> bool:
 
 
 def _resolve_entry(name: str, entry: Entry) -> str:
-    """Pick the best target for an entry (local-if-present, else HF)."""
+    """Pick the best target for an entry (local-if-present, else HF).
+
+    `local` may be a single path string or a list of candidate paths. The
+    first one that exists on disk wins — useful for entries that should
+    resolve on multiple hosts (e.g. BR200 share_space AND Jetstream's
+    bind-mounted /local_models) without per-host config sprawl.
+    """
     if isinstance(entry, str):
         if _is_marker(entry):
             raise FileNotFoundError(
@@ -96,18 +107,21 @@ def _resolve_entry(name: str, entry: Entry) -> str:
     if isinstance(entry, dict):
         local = entry.get("local")
         hf = entry.get("hf")
-        if local and not _is_marker(local) and Path(local).expanduser().exists():
-            LOGGER.info("registry: '%s' -> local %s", name, local)
-            return str(Path(local).expanduser())
+        candidates = []
+        if local:
+            candidates = local if isinstance(local, list) else [local]
+        for cand in candidates:
+            if cand and not _is_marker(cand) and Path(cand).expanduser().exists():
+                LOGGER.info("registry: '%s' -> local %s", name, cand)
+                return str(Path(cand).expanduser())
         if hf and not _is_marker(hf):
             LOGGER.info(
                 "registry: '%s' local missing; falling back to HF '%s'", name, hf,
             )
             return hf
-        if local and not _is_marker(local):
-            # Local was specified but path doesn't exist, and no HF fallback.
+        if candidates:
             raise FileNotFoundError(
-                f"Model '{name}': local path '{local}' does not exist and no 'hf' fallback set."
+                f"Model '{name}': none of local candidates exist ({candidates}) and no 'hf' fallback set."
             )
         raise FileNotFoundError(
             f"Model '{name}' has no usable target (entry={entry})."

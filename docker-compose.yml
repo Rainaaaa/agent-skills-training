@@ -9,9 +9,13 @@
 #   docker compose run --rm baseline    --config stages/downstream/configs/eval_baseline_example.yaml
 #
 # Override host paths with env vars (set in your shell or a .env file):
-#   AGENTSKILLS_DATA_HOST=/path/to/datasets
+#   AGENTSKILLS_DATA_HOST=/path/to/datasets            (default below: Jetstream)
 #   AGENTSKILLS_OUTPUTS_HOST=/path/to/training_outputs
 #   AGENTSKILLS_MODELS_HOST=/path/to/hf_models_cache         (optional)
+#
+# AGENTSKILLS_DATA_HOST default is the canonical Jetstream layout:
+#   /media/volume/skills/misalignment/{full_cpt,pl_hcl,sft}/...
+# Override for BR200 / other hosts.
 
 services:
   base: &base
@@ -28,16 +32,21 @@ services:
     environment:
       # These are forwarded into the configs via ${VAR:-default} interpolation.
       AGENTSKILLS_TRAIN_OUTPUT_ROOT: "${AGENTSKILLS_TRAIN_OUTPUT_ROOT:-/app/outputs/runs}"
-      # Data path defaults match the v3 / v2 layout (challenge-scrubbed) — see
-      # KELLY_IT_HANDOFF.md §2/§5 and agent-skills-preparation/pipeline/.
-      #   CPT     -> full_cpt_v3/stage{1,2}/{train,val,test}.parquet
-      #   HCL     -> pl_hcl/pl_hcl_v2/stage{1,2}/pairs_{train,val,test}.parquet
-      #              (joined pairs file from build_hcl_pairs.py — needs
-      #               anchor_text + pair_text + pair_kind columns)
-      #   SFT     -> sft/sft_v2/classifier_{train,val,test}.parquet  (description-matching, scrubbed)
-      #   SFT (challenge / gold) -> sft/challenge/classifier_{train,val,test}.parquet
-      # The misalignment trainer reads `skill_text` + `alignment_class`;
-      # both sft_v2 and challenge parquets carry those columns.
+      # Data path defaults — see KELLY_IT_HANDOFF.md §2/§5 for the layout
+      # produced by agent-skills-preparation/. Per-task SFT splits split out
+      # so the malicious-detection trainer and misalignment-detection trainer
+      # each get a task-specific parquet with a clearly-named label column:
+      #   CPT      -> full_cpt/full_cpt_v3/stage{1,2}/{train,val,test}.parquet
+      #   HCL      -> pl_hcl/pl_hcl_v2/stage{1,2}/pairs_{train,val,test}.parquet
+      #                 (built by build_hcl_pairs.py — needs anchor_text +
+      #                  pair_text + pair_kind columns)
+      #   SFT mal  -> sft/sft_mal/mal_{train,val,test}.parquet
+      #                 (overall_class label, derived from
+      #                  scan_results_reviewed.final_safe)
+      #   SFT align -> sft/sft_align/align_{train,val,test}.parquet
+      #                 (alignment_class label: ALIGNED/MISALIGNED)
+      # All four are produced from the same challenge source (1444 reviewed
+      # skills) with provenance recorded in each dir's manifest.json.
       AGENTSKILLS_FULL_CPT_TRAIN:    "${AGENTSKILLS_FULL_CPT_TRAIN:-/data/full_cpt/full_cpt_v3/stage1/train.parquet}"
       AGENTSKILLS_FULL_CPT_VAL:      "${AGENTSKILLS_FULL_CPT_VAL:-/data/full_cpt/full_cpt_v3/stage1/val.parquet}"
       AGENTSKILLS_FULL_CPT_TEST:     "${AGENTSKILLS_FULL_CPT_TEST:-/data/full_cpt/full_cpt_v3/stage1/test.parquet}"
@@ -47,17 +56,15 @@ services:
       AGENTSKILLS_PHASE1_ADAPTER:    "${AGENTSKILLS_PHASE1_ADAPTER:-}"
       AGENTSKILLS_PHASE2_ADAPTER:    "${AGENTSKILLS_PHASE2_ADAPTER:-}"
       AGENTSKILLS_SFT_ADAPTER:       "${AGENTSKILLS_SFT_ADAPTER:-}"
-      AGENTSKILLS_SFT_MAL_TRAIN:     "${AGENTSKILLS_SFT_MAL_TRAIN:-/data/sft/sft_v2/classifier_train.parquet}"
-      AGENTSKILLS_SFT_MAL_VAL:       "${AGENTSKILLS_SFT_MAL_VAL:-/data/sft/sft_v2/classifier_val.parquet}"
-      AGENTSKILLS_SFT_MAL_TEST:      "${AGENTSKILLS_SFT_MAL_TEST:-/data/sft/sft_v2/classifier_test.parquet}"
-      AGENTSKILLS_SFT_ALIGN_TRAIN:   "${AGENTSKILLS_SFT_ALIGN_TRAIN:-/data/sft/sft_v2/classifier_train.parquet}"
-      AGENTSKILLS_SFT_ALIGN_VAL:     "${AGENTSKILLS_SFT_ALIGN_VAL:-/data/sft/sft_v2/classifier_val.parquet}"
-      AGENTSKILLS_SFT_ALIGN_TEST:    "${AGENTSKILLS_SFT_ALIGN_TEST:-/data/sft/sft_v2/classifier_test.parquet}"
-      # Challenge set is EVAL-ONLY (no train/val): used by inference.py to
-      # score an SFT-trained adapter against gold human-reviewed labels.
-      AGENTSKILLS_SFT_CHALLENGE_TEST:  "${AGENTSKILLS_SFT_CHALLENGE_TEST:-/data/sft/challenge/classifier_test.parquet}"
-      # Default inference target = the gold-label challenge eval set.
-      AGENTSKILLS_INFER_TEST:        "${AGENTSKILLS_INFER_TEST:-/data/sft/challenge/classifier_test.parquet}"
+      AGENTSKILLS_SFT_MAL_TRAIN:     "${AGENTSKILLS_SFT_MAL_TRAIN:-/data/sft/sft_mal/mal_train.parquet}"
+      AGENTSKILLS_SFT_MAL_VAL:       "${AGENTSKILLS_SFT_MAL_VAL:-/data/sft/sft_mal/mal_val.parquet}"
+      AGENTSKILLS_SFT_MAL_TEST:      "${AGENTSKILLS_SFT_MAL_TEST:-/data/sft/sft_mal/mal_test.parquet}"
+      AGENTSKILLS_SFT_ALIGN_TRAIN:   "${AGENTSKILLS_SFT_ALIGN_TRAIN:-/data/sft/sft_align/align_train.parquet}"
+      AGENTSKILLS_SFT_ALIGN_VAL:     "${AGENTSKILLS_SFT_ALIGN_VAL:-/data/sft/sft_align/align_val.parquet}"
+      AGENTSKILLS_SFT_ALIGN_TEST:    "${AGENTSKILLS_SFT_ALIGN_TEST:-/data/sft/sft_align/align_test.parquet}"
+      # Default inference target = the alignment test split (same provenance
+      # as sft_align/, just re-used as eval-only here).
+      AGENTSKILLS_INFER_TEST:        "${AGENTSKILLS_INFER_TEST:-/data/sft/sft_align/align_test.parquet}"
       AGENTSKILLS_INFER_PREDS:       "${AGENTSKILLS_INFER_PREDS:-}"
       AGENTSKILLS_INFER_METRICS:     "${AGENTSKILLS_INFER_METRICS:-}"
       AGENTSKILLS_BACKBONE:          "${AGENTSKILLS_BACKBONE:-Foundation-Sec-8B-Reasoning}"
@@ -66,12 +73,19 @@ services:
       # else). Set to a positive int to override — 1 forces single-process.
       AGENTSKILLS_NPROC:             "${AGENTSKILLS_NPROC:-}"
     volumes:
-      - ${AGENTSKILLS_DATA_HOST:-./inputs}:/data:ro
+      - ${AGENTSKILLS_DATA_HOST:-/media/volume/skills/misalignment}:/data:ro
       - ${AGENTSKILLS_OUTPUTS_HOST:-./outputs}:/app/outputs
       # Bind a real model_path.json over the image default if you have one.
       - ./model_path.json:/app/model_path.json:ro
       # Cache HF models in a host dir so they survive container restarts.
       - ${AGENTSKILLS_MODELS_HOST:-./outputs/hf_cache}:/app/outputs/hf_cache
+      # Optional: host-side dir of pre-downloaded backbone weights, exposed
+      # at /local_models inside the container. The default points at the
+      # Jetstream layout; on BR200 this should resolve to your share_space
+      # dir, or be overridden via AGENTSKILLS_LOCAL_MODELS_HOST. Configs
+      # reference these via either model_path.json or a CLI override
+      # (model.model_name_or_path=/local_models/<dirname>).
+      - ${AGENTSKILLS_LOCAL_MODELS_HOST:-/media/volume/skills/models}:/local_models:ro
 
   # shm_size: NCCL needs /dev/shm for inter-rank IPC under DDP. Docker's
   # 64 MB default is too small for 8B-scale models and DDP init crashes with
