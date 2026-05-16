@@ -76,8 +76,16 @@ def subsample_pair_splits(
     max_rows: Dict[str, Optional[int]],
     fractions: Dict[str, Optional[float]],
     seed: int = 42,
+    stratify_by: Optional[str] = None,
 ) -> DatasetDict:
-    """Per-split row cap and/or fractional subsample (smaller keep-size wins)."""
+    """Per-split row cap and/or fractional subsample (smaller keep-size wins).
+
+    If `stratify_by` is a column name (typically "label" or "pair_kind"), the
+    keep-set is built by drawing roughly equal counts from each distinct value
+    of that column. Useful for smoke evals on the naturally-imbalanced pair
+    splits (~88% label=0 / 12% label=1), where a uniform random `keep=64`
+    yields majority negatives and uninterpretable accuracy/F1.
+    """
     for split, ds in dataset.items():
         n = len(ds)
         keep = n
@@ -87,7 +95,36 @@ def subsample_pair_splits(
             keep = min(keep, max(1, int(n * float(frac))))
         if cap is not None and cap > 0:
             keep = min(keep, int(cap))
-        if keep < n:
+        if keep >= n:
+            continue
+
+        if stratify_by and stratify_by in ds.column_names:
+            values = ds[stratify_by]
+            groups: Dict[Any, list] = {}
+            for idx, v in enumerate(values):
+                groups.setdefault(v, []).append(idx)
+            n_groups = len(groups)
+            per_group = max(1, keep // n_groups)
+            import random
+            rng = random.Random(seed)
+            picked: list = []
+            for v, idxs in groups.items():
+                rng.shuffle(idxs)
+                picked.extend(idxs[:per_group])
+            # If keep wasn't divisible by n_groups, top up from remaining rows.
+            remaining = [
+                i for v, idxs in groups.items() for i in idxs[per_group:]
+            ]
+            rng.shuffle(remaining)
+            picked.extend(remaining[: max(0, keep - len(picked))])
+            picked = picked[:keep]
+            LOGGER.info(
+                "Subsampling %s (stratify_by=%s): %d -> %d  groups=%s",
+                split, stratify_by, n, len(picked),
+                {str(v): min(per_group, len(idxs)) for v, idxs in groups.items()},
+            )
+            dataset[split] = ds.select(picked)
+        else:
             LOGGER.info(
                 "Subsampling %s: %d -> %d (cap=%s, fraction=%s)",
                 split, n, keep, cap, frac,

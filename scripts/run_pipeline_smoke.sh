@@ -83,9 +83,11 @@ echo "[pipe] model=${MODEL}"
 command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L || true
 
 # ----- shared run-name + adapter paths -----
+# Bump the suffix when the smoke recipe changes so already_done() doesn't
+# silently re-use last-run's artifacts and skip the new exercise.
 RUN_BASE=pipe_smoke
 CPT_RUN="${RUN_BASE}_cpt"
-HCL_RUN="${RUN_BASE}_hcl"
+HCL_RUN="${RUN_BASE}_hcl_v4"        # v4 = stratify by pair_kind (3-way), breakdown emitted
 SFT_RUN="${RUN_BASE}_sft_align"
 INF_RUN="${RUN_BASE}_infer_align"
 BASE_RUN="${RUN_BASE}_eval_baseline"
@@ -138,6 +140,14 @@ run_step "1_cpt" "${CPT_ADAPTER}" \
     model.attn_implementation=sdpa
 
 # ----- 2) Stage 2 HCL (chained) -----
+# Sized so the eval batch is statistically meaningful: the pair-test split is
+# ~88% label=0 / 12% label=1, so 8 random eval rows often have ZERO positives
+# (P ≈ 36%) — `pos_prob_mean` then collapses to 0 and accuracy looks like a
+# bug. 64-row evals give P(no positives) ≈ 0.03% and a real signal.
+# max_steps=20 also lets the BCE-on-cosine head move past its random init.
+# ce_loss_weight=0.5 turns on the supplementary InfoNCE term so the
+# encoder gets gradient from the positive subset too (the default config
+# leaves it off for unit-test minimality).
 if [[ -d "${CPT_ADAPTER}" ]]; then
   HCL_MARKER="${OUT_ROOT}/${SAFE_MODEL}/${HCL_RUN}/final_model"
   run_step "2_hcl" "${HCL_MARKER}" \
@@ -150,10 +160,12 @@ if [[ -d "${CPT_ADAPTER}" ]]; then
       "data.train_file=${HCL_DIR}/pairs_train.parquet" \
       "data.validation_file=${HCL_DIR}/pairs_val.parquet" \
       "data.test_file=${HCL_DIR}/pairs_test.parquet" \
-      training.max_steps=4 \
-      data.max_train_rows=64 data.max_validation_rows=8 data.max_test_rows=8 \
+      training.max_steps=20 \
+      data.max_train_rows=256 data.max_validation_rows=64 data.max_test_rows=99 \
+      data.stratify_by=pair_kind \
       data.max_seq_length=512 \
-      model.attn_implementation=sdpa
+      model.attn_implementation=sdpa \
+      model.hcl.ce_loss_weight=0.5
 else
   echo "[pipe] SKIP step 2 — Stage 1 adapter missing at ${CPT_ADAPTER}"
   RESULTS[2_hcl]="SKIP(no-cpt-adapter)"

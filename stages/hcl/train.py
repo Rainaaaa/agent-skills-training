@@ -21,6 +21,7 @@ TrainingArguments builder) are imported from `common.*`.
 
 import argparse
 import inspect
+import json
 import logging
 import os
 from pathlib import Path
@@ -29,6 +30,7 @@ from typing import Any, Dict, Optional
 import numpy as np
 import torch
 import yaml
+from torch.utils.data import DataLoader
 from transformers import EvalPrediction, Trainer, set_seed
 
 from common.config import load_config
@@ -45,7 +47,12 @@ from common.trainer_utils import (
 )
 
 from stages.hcl.collator import HclPairCollator
-from stages.hcl.data import load_pair_splits, subsample_pair_splits, tokenize_pairs
+from stages.hcl.data import (
+    PAIR_KIND_TO_ID,
+    load_pair_splits,
+    subsample_pair_splits,
+    tokenize_pairs,
+)
 from stages.hcl.modeling import HclPairModel, build_hcl_model
 
 
@@ -163,6 +170,104 @@ class HclTrainer(Trainer):
             tok.save_pretrained(output_dir)
 
 
+def evaluate_per_pair_kind(
+    model: HclPairModel,
+    eval_dataset,
+    data_collator: HclPairCollator,
+    batch_size: int = 8,
+    metric_key_prefix: str = "test",
+) -> Dict[str, float]:
+    """Per-pair_kind breakdown of HCL metrics on `eval_dataset`.
+
+    Runs one forward pass over the split with no gradients, then partitions
+    rows by `pair_kind_id` (positive / corrupted / swapped) and reports
+    accuracy / precision / recall / F1 / pos_prob_mean / neg_prob_mean for
+    each subset. Useful for choosing `model.hcl.pair_kind_weights`:
+
+      - if `corrupted` accuracy lags `swapped`, raise weight[1]
+      - if `swapped` accuracy lags `corrupted`, raise weight[2]
+      - if `positive` recall is the bottleneck, raise weight[0]
+
+    Returned keys are flattened as `<prefix>_<pair_kind>_<metric>` so they
+    land in the same JSON / TensorBoard namespace as the trainer-emitted
+    aggregate metrics. ID->name reverse map mirrors `PAIR_KIND_TO_ID`.
+    """
+    if "pair_kind_id" not in eval_dataset.column_names:
+        LOGGER.info(
+            "Per-pair_kind breakdown skipped: 'pair_kind_id' missing from "
+            "eval dataset columns (was the source parquet missing pair_kind?)."
+        )
+        return {}
+    # Pair-kind ids of -1 mean "unknown kind" (PAIR_KIND_TO_ID lookup miss),
+    # so they're not useful for the breakdown — skip silently.
+
+    id_to_kind = {v: k for k, v in PAIR_KIND_TO_ID.items()}
+    device = next(model.parameters()).device
+    model.eval()
+
+    loader = DataLoader(
+        eval_dataset,
+        batch_size=batch_size,
+        collate_fn=data_collator,
+        shuffle=False,
+    )
+
+    all_probs: list = []
+    all_labels: list = []
+    all_kinds: list = []
+    with torch.no_grad():
+        for batch in loader:
+            batch_on_device = {
+                k: (v.to(device) if isinstance(v, torch.Tensor) else v)
+                for k, v in batch.items()
+            }
+            out = model(**batch_on_device)
+            logits = out.logits.detach().float().cpu().numpy().reshape(-1)
+            labels = batch["labels"].detach().float().cpu().numpy().reshape(-1)
+            kinds = batch["pair_kind_id"].detach().cpu().numpy().reshape(-1)
+            probs = 1.0 / (1.0 + np.exp(-logits))
+            all_probs.append(probs)
+            all_labels.append(labels)
+            all_kinds.append(kinds)
+
+    probs = np.concatenate(all_probs) if all_probs else np.zeros(0)
+    labels = np.concatenate(all_labels) if all_labels else np.zeros(0)
+    kinds = np.concatenate(all_kinds) if all_kinds else np.zeros(0, dtype=np.int64)
+    preds = (probs >= 0.5).astype(np.float32)
+
+    breakdown: Dict[str, float] = {}
+    for kind_id, kind_name in sorted(id_to_kind.items()):
+        mask = kinds == kind_id
+        n = int(mask.sum())
+        if n == 0:
+            continue
+        p, l, pr = probs[mask], labels[mask], preds[mask]
+        tp = float(((pr == 1) & (l == 1)).sum())
+        fp = float(((pr == 1) & (l == 0)).sum())
+        fn = float(((pr == 0) & (l == 1)).sum())
+        acc = float((pr == l).mean())
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        f1 = (
+            2 * precision * recall / (precision + recall)
+            if (precision + recall) > 0
+            else 0.0
+        )
+        pos_mean = float(p[l == 1].mean()) if (l == 1).any() else 0.0
+        neg_mean = float(p[l == 0].mean()) if (l == 0).any() else 0.0
+        prefix = f"{metric_key_prefix}_{kind_name}"
+        breakdown[f"{prefix}_n"] = float(n)
+        breakdown[f"{prefix}_accuracy"] = acc
+        breakdown[f"{prefix}_precision"] = precision
+        breakdown[f"{prefix}_recall"] = recall
+        breakdown[f"{prefix}_f1"] = f1
+        breakdown[f"{prefix}_pos_prob_mean"] = pos_mean
+        breakdown[f"{prefix}_neg_prob_mean"] = neg_mean
+        breakdown[f"{prefix}_prob_gap"] = pos_mean - neg_mean
+
+    return breakdown
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="LP-HCL CPT trainer (Phase 2)")
     parser.add_argument("--config", required=True, help="Path to YAML config")
@@ -205,6 +310,9 @@ def main() -> None:
             "test": data_cfg.get("test_fraction"),
         },
         seed=int(run_cfg.get("seed", 42)),
+        # Optional: stratify the keep-set by a column ("label" or "pair_kind").
+        # Useful for smoke evals on the naturally-imbalanced pair splits.
+        stratify_by=data_cfg.get("stratify_by"),
     )
     tokenized = tokenize_pairs(raw_datasets, tokenizer, data_cfg)
 
@@ -306,6 +414,25 @@ def main() -> None:
         )
         trainer.log_metrics("test", test_metrics)
         trainer.save_metrics("test", test_metrics)
+
+        # Per-pair_kind breakdown — for tuning `model.hcl.pair_kind_weights`.
+        try:
+            per_kind = evaluate_per_pair_kind(
+                model=trainer.model,
+                eval_dataset=tokenized["test"],
+                data_collator=data_collator,
+                batch_size=int(training_cfg.get("per_device_eval_batch_size", 8)),
+                metric_key_prefix="test",
+            )
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning("Per-pair_kind breakdown failed: %s", exc)
+            per_kind = {}
+        if per_kind:
+            LOGGER.info("Per-pair_kind test metrics:\n%s", json.dumps(per_kind, indent=2))
+            trainer.log_metrics("test_breakdown", per_kind)
+            (output_dir / "test_breakdown_by_pair_kind.json").write_text(
+                json.dumps(per_kind, indent=2) + "\n"
+            )
 
     LOGGER.info("Done. Outputs in %s", output_dir)
 

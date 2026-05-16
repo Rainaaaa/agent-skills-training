@@ -407,6 +407,106 @@ only override the *host*-side mount point (`AGENTSKILLS_DATA_HOST`).
 The same trick is used in agent-skills-collection / -scanning /
 -preparation, so the pattern is consistent across the four repos.
 
+## Slurm smoke test on Quartz / BR200
+
+For end-to-end validation on IU's Slurm clusters (no Docker needed —
+runs directly against the `AgentSkillsOSS` conda env), use the two
+launchers under `scripts/`:
+
+```
+scripts/
+├── run_smoke.sh              # one-stage smoke (just Stage 1 / CPT) per model
+├── submit_smoke_all.sh       # submit Stage-1 smoke for every model in model_path.json
+└── run_pipeline_smoke.sh     # FULL pipeline smoke (CPT -> HCL -> SFT-align -> inference -> eval_baseline)
+                              # one model, one Slurm job, per-step pass/fail summary
+```
+
+Cluster auto-detection: `submit_smoke_all.sh` picks `-p hopper --qos=hopper`
+on Quartz (H100 80GB) and `-p gpu` on BR200 (A100 40GB) based on the
+login hostname. The launchers source `/N/slate/cz1/miniconda3` and
+`activate` the `AgentSkillsOSS` env by absolute path (the env lives at
+`/N/slate/cz1/conda/envs/AgentSkillsOSS`, distinct from conda's base —
+name-based lookup would silently fall through to `/usr/bin/python3.6`).
+
+### Full-pipeline smoke
+
+```bash
+sbatch -p hopper --qos=hopper scripts/run_pipeline_smoke.sh Foundation-Sec-8B-Reasoning
+```
+
+Single Slurm job runs five steps back-to-back on tiny smoke caps (~20
+min wall on one H100):
+
+1. **Stage 1 — CPT** on `full_cpt_v3/stage1/{train,val,test}.parquet`
+   (challenge-scrubbed v3); writes `final_model/` LoRA.
+2. **Stage 2 — HCL** on `pl_hcl_v2/stage1/pairs_{train,val,test}.parquet`,
+   chained on the Stage 1 adapter. Stratified eval (`stratify_by=pair_kind`)
+   and `ce_loss_weight=0.5` so the head moves past its random init.
+   Emits a per-pair_kind breakdown — see below.
+3. **Stage 3 — SFT misalignment** trained on `sft/sft_v2/classifier_*.parquet`
+   (broad scanner-labeled set), chained on the Stage 1 adapter.
+   `sft/challenge/` is NEVER an SFT training source — it is the
+   gold-label evaluation set used by step 4.
+4. **Stage 3 — Inference** on `sft/challenge/classifier_test.parquet`
+   using the SFT-misalignment adapter from step 3; emits
+   `predictions_misalignment_detection.jsonl` + accuracy/precision/recall/F1.
+5. **Stage 3 — eval_baseline** intrinsic CLM perplexity on
+   `full_cpt_v3/stage1/test.parquet`.
+
+Per-step markers (`final_model/` for trainers, `metrics_*.json` for
+inference, `baseline_metrics.json` for eval) gate skip-on-rerun, so a
+re-submitted job picks up where it left off — handy when you only want
+to retry one stage after a code change.
+
+### HCL eval — per-pair_kind breakdown
+
+The HCL pair test set is naturally class-imbalanced (~88% `label=0` /
+12% `label=1`) and split three ways by `pair_kind`:
+
+| `pair_kind` | `label` | semantics |
+| --- | --- | --- |
+| `positive`  | 1 | anchor + pair are different views of the SAME skill |
+| `corrupted` | 0 | pair is anchor's content perturbed (tokens shuffled / replaced) |
+| `swapped`   | 0 | pair is from a DIFFERENT skill entirely |
+
+Uniform random subsampling for smoke evals (e.g. `max_test_rows=8`)
+hits the all-negatives corner roughly 36% of the time, producing
+`accuracy=0` / `prob_gap=negative` metrics that look like a bug but
+are just a sampling artifact. Two fixes are wired in:
+
+- `stages/hcl/data.py::subsample_pair_splits` accepts an optional
+  `stratify_by` argument (also exposed as `data.stratify_by` in YAML /
+  CLI overrides). Setting it to `pair_kind` makes the keep-set
+  ~equal-sized across the three kinds; `label` gives a 50/50 pos/neg
+  split.
+- `stages/hcl/train.py::evaluate_per_pair_kind` runs a no-grad forward
+  pass over the (stratified) test split after the final eval and
+  reports per-kind accuracy / precision / recall / F1 / pos_prob_mean /
+  neg_prob_mean. Result is logged and written to
+  `<output_dir>/test_breakdown_by_pair_kind.json`. Use it to tune
+  `model.hcl.pair_kind_weights = [positive, corrupted, swapped]`:
+  - if `corrupted` accuracy lags `swapped`, raise weight[1];
+  - if `swapped` accuracy lags `corrupted`, raise weight[2];
+  - if `positive` recall is the bottleneck, raise weight[0].
+
+### Sample log lines you should see
+
+```
+[smoke] python=/N/slate/cz1/conda/envs/AgentSkillsOSS/bin/python
+[pipe] STEP: 1_cpt
+[pipe] STEP: 2_hcl
+2026-… INFO stages.hcl.data Subsampling test (stratify_by=pair_kind): 101376 -> 99  groups={'positive':33,'corrupted':33,'swapped':33}
+[pipe] STEP: 3_sft_align
+[pipe] STEP: 4_inference
+[pipe] STEP: 5_eval_baseline
+[pipe] SUMMARY  model=Foundation-Sec-8B-Reasoning
+  1_cpt              PASS
+  2_hcl              PASS
+  3_sft_align        PASS
+  4_inference        PASS
+  5_eval_baseline    PASS
+```
+
 ## Pipeline guarantees
 
 - **Auto-resume from checkpoints.** `run.auto_resume: true` (default)

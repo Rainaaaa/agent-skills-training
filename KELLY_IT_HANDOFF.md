@@ -137,6 +137,91 @@ Expected timings on an A100 40 GB at the smoke caps above:
 
 If all three exit 0 and write a `final_model/` directory, the host is good.
 
+### 4a. Full-pipeline Slurm smoke (Quartz / BR200, no Docker)
+
+For IU's Slurm clusters where Docker isn't available, `scripts/run_pipeline_smoke.sh`
+runs the same five stages back-to-back in one Slurm job against the
+conda env at `/N/slate/cz1/conda/envs/AgentSkillsOSS` (sourced from
+`/N/slate/cz1/miniconda3`). The companion launcher
+`scripts/submit_smoke_all.sh` auto-detects cluster ↔ partition:
+
+| Cluster   | Partition | QOS      | Auto-detected when hostname matches |
+|-----------|-----------|----------|--------------------------------------|
+| Quartz    | hopper    | hopper   | `h[0-9]*` / `*.quartz.*` (H100 80GB) |
+| BigRed200 | gpu       | default  | `bigred*` / `*.bigred*` (A100 40GB)  |
+
+```bash
+# Stage-1-only smoke for every backbone in model_path.json (parallel jobs):
+bash scripts/submit_smoke_all.sh
+
+# Or a subset:
+bash scripts/submit_smoke_all.sh Foundation-Sec-8B-Reasoning Qwen3-8B
+
+# Full pipeline (CPT -> HCL -> SFT-align -> inference -> eval_baseline)
+# for ONE backbone, one Slurm job, per-step pass/fail summary at the end:
+sbatch -p hopper --qos=hopper scripts/run_pipeline_smoke.sh Foundation-Sec-8B-Reasoning   # Quartz
+sbatch -p gpu                  scripts/run_pipeline_smoke.sh Foundation-Sec-8B-Reasoning   # BR200
+```
+
+What the full-pipeline smoke does (defaults under `scripts/run_pipeline_smoke.sh`):
+
+1. **Stage 1 — CPT** on `full_cpt/full_cpt_v3/stage1/{train,val,test}.parquet`
+   (challenge-scrubbed v3). 4 steps × 64 train rows.
+2. **Stage 2 — HCL** on `pl_hcl/pl_hcl_v2/stage1/pairs_{train,val,test}.parquet`,
+   chained on Stage 1's LoRA. 20 steps × 256 train rows, **stratified eval
+   by `pair_kind`** (33 positive + 33 corrupted + 33 swapped) so the eval
+   isn't dominated by the natural 88%-negative skew of the pair file.
+   `ce_loss_weight=0.5` so the contrastive head moves past random init.
+   Emits a per-pair_kind breakdown — see "HCL breakdown" below.
+3. **Stage 3 — SFT misalignment**, trained on `sft/sft_v2/classifier_*.parquet`
+   (broad scanner-labeled set), chained on Stage 1's LoRA.
+   `sft/challenge/` is **eval-only** — never an SFT training source.
+4. **Stage 3 — Inference** on `sft/challenge/classifier_test.parquet`
+   (gold-label set) using the SFT-misalignment adapter from step 3.
+5. **Stage 3 — eval_baseline** intrinsic CLM perplexity on
+   `full_cpt/full_cpt_v3/stage1/test.parquet`.
+
+Per-step markers (`final_model/` for trainers, `metrics_<task>.json` for
+inference, `baseline_metrics.json` for eval) gate skip-on-rerun, so a
+re-submit after a code change retries only the failed/new steps.
+
+Logs land in `log/pipe_smoke_<MODEL>_<JOBID>.{log,err}`; outputs in
+`outputs/runs/<MODEL>/<run_name>/`.
+
+**HCL breakdown — for tuning `model.hcl.pair_kind_weights`.**
+After the final test eval, `stages/hcl/train.py::evaluate_per_pair_kind`
+runs a no-grad forward pass over the stratified test split and writes
+`outputs/runs/<MODEL>/<hcl_run>/test_breakdown_by_pair_kind.json` with
+per-kind `accuracy / precision / recall / f1 / pos_prob_mean /
+neg_prob_mean / prob_gap / n` for `pair_kind ∈ {positive, corrupted,
+swapped}`. Tuning hints:
+
+- `corrupted` accuracy lags `swapped` → raise `pair_kind_weights[1]`
+- `swapped` accuracy lags `corrupted` → raise `pair_kind_weights[2]`
+- `positive` recall is the bottleneck → raise `pair_kind_weights[0]`
+
+**Why the per-pair_kind stratified eval matters.** The pair test split
+is ~12% `label=1` (positives) and ~88% `label=0` (corrupted + swapped).
+A uniform random `max_test_rows=8` lands on all-negatives ~36% of the
+time → `pos_prob_mean` collapses to `0.0` and accuracy/F1 look like a
+bug. Stratifying by `pair_kind` (`data.stratify_by=pair_kind`) gives
+~equal counts per kind and produces interpretable metrics on a
+20-step smoke.
+
+Expected timings on one H100 80GB (hopper) at the v4 smoke caps:
+
+| Step | Wall time |
+|------|-----------|
+| 1 CPT          | ~30 s after HF cache is warm (first-ever run ~8 min for shard download) |
+| 2 HCL          | ~5 min (20 steps + 99-row stratified eval + breakdown) |
+| 3 SFT-align    | ~3 min |
+| 4 Inference    | ~30 s (8-row smoke) |
+| 5 eval_baseline| ~30 s |
+| **Total**      | ~10–12 min for a single backbone |
+
+If the summary block at the bottom of the log reads `1_cpt PASS … 5_eval_baseline PASS`,
+the host is green end-to-end on the new datasets.
+
 ---
 
 ## 5. Real training run
