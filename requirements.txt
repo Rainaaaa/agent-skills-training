@@ -33,5 +33,5 @@ tensorboard>=2.16,<3
 # common/modeling.py — only paid for when a config requests quantization.
 bitsandbytes>=0.43,<0.45
 
-# Optional — flash-attention 2 (rebuild against your CUDA)
-# flash-attn>=2.5,<3
+# flash-attention 2 (rebuild against your CUDA)
+flash-attn>=2.5,<3
