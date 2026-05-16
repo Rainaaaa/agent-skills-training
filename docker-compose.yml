@@ -65,21 +65,29 @@ services:
       # Cache HF models in a host dir so they survive container restarts.
       - ${AGENTSKILLS_MODELS_HOST:-./outputs/hf_cache}:/app/outputs/hf_cache
 
+  # shm_size: NCCL needs /dev/shm for inter-rank IPC under DDP. Docker's
+  # 64 MB default is too small for 8B-scale models and DDP init crashes with
+  # "Error while creating shared memory segment /dev/shm/nccl-*". 4 GB is
+  # comfortable headroom for any multi-GPU run on this image.
   pretraining:
     <<: *base
+    shm_size: '4gb'
     command: ["stages/pretraining/train.py", "--config", "stages/pretraining/configs/example.yaml"]
 
   hcl:
     <<: *base
+    shm_size: '4gb'
     command: ["stages/hcl/train.py", "--config", "stages/hcl/configs/example.yaml"]
 
   sft-mal:
     <<: *base
+    shm_size: '4gb'
     command: ["stages/downstream/sft/train.py",
               "--config", "stages/downstream/configs/sft_malicious_example.yaml"]
 
   sft-align:
     <<: *base
+    shm_size: '4gb'
     command: ["stages/downstream/sft/train.py",
               "--config", "stages/downstream/configs/sft_misalignment_example.yaml"]
 

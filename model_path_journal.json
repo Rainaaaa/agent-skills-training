@@ -4,13 +4,33 @@
       "local": "/N/project/ai4chips/share_space/general_llm/Qwen/Qwen3-8B/models--Qwen--Qwen3-8B/snapshots/b968826d9c46dd6066d109eabc6255188de91218",
       "hf": "Qwen/Qwen3-8B"
     },
+    "Qwen/Qwen2.5-Coder-7B-Instruct": {
+      "local": "/N/project/ai4chips/share_space/general_llm/Qwen/Qwen2.5-Coder-7B-Instruct/models--Qwen--Qwen2.5-Coder-7B-Instruct/snapshots/c03e6d358207e414f1eca0bb1891e29f1db0e242",
+      "hf": "Qwen/Qwen2.5-Coder-7B-Instruct"
+    },
+    "DeepSeek-V4-Flash": {
+      "local": "/N/project/ai4chips/share_space/general_llm/deepseek-ai/DeepSeek-V4-Flash/models--deepseek-ai--DeepSeek-V4-Flash/snapshots/0cad8ee349f4f2d669ef30552e3748bd7f8cfab5",
+      "hf": "deepseek-ai/DeepSeek-V4-Flash"
+    },
     "gemma-4-E4B-it": {
       "local": "/N/project/ai4chips/share_space/general_llm/google/gemma-4-E4B-it/models--google--gemma-4-E4B-it/snapshots/3555bddc93a623db8887dd2e52123facc45ade77",
       "hf": "google/gemma-4-E4B-it"
     },
+    "gemma-4-31B-it": {
+      "local": "/N/project/ai4chips/share_space/general_llm/google/gemma-4-31B-it/models--google--gemma-4-31B-it/snapshots/ba74f5b6c647c0911554e50278d6f6f4477f9010",
+      "hf": "google/gemma-4-31B-it"
+    },
     "llama3.1-8b": {
       "local": "/N/project/ai4chips/share_space/general_llm/meta-llama/Llama-3.1-8B-Instruct/models--meta-llama--Llama-3.1-8B-Instruct/snapshots/0e9e39f249a16976918f6564b8830bc894c89659",
       "hf": "meta-llama/Llama-3.1-8B-Instruct"
+    },
+    "Qwen3.6-35B-A3B": {
+      "local": "/N/project/ai4chips/share_space/general_llm/Qwen/Qwen3.6-35B-A3B/models--Qwen--Qwen3.6-35B-A3B/snapshots/995ad96eacd98c81ed38be0c5b274b04031597b0",
+      "hf": "Qwen/Qwen3.6-35B-A3B"
+    },
+    "gpt-oss-20b": {
+      "local": "/N/project/ai4chips/share_space/general_llm/openai/gpt-oss-20b/models--openai--gpt-oss-20b/snapshots/6cee5e81ee83917806bbde320786a8fb61efebee",
+      "hf": "openai/gpt-oss-20b"
     }
   },
   "CybersecurityLLM": {
