@@ -1,29 +1,48 @@
 {
+  "_doc": "Each entry's `local` is a list of candidate paths tried in order; the first one that exists on disk wins. Falls back to `hf` (downloaded via HuggingFace Hub) if no local candidate exists. /local_models/ is the path the docker-compose stack bind-mounts from AGENTSKILLS_LOCAL_MODELS_HOST (default: /media/volume/skills/models on Jetstream).",
   "GeneralLLMs": {
     "Qwen3-8B": {
-      "local": "/N/project/ai4chips/share_space/general_llm/Qwen/Qwen3-8B/models--Qwen--Qwen3-8B/snapshots/b968826d9c46dd6066d109eabc6255188de91218",
+      "local": [
+        "/local_models/Qwen3-8B",
+        "/N/project/ai4chips/share_space/general_llm/Qwen/Qwen3-8B/models--Qwen--Qwen3-8B/snapshots/b968826d9c46dd6066d109eabc6255188de91218"
+      ],
       "hf": "Qwen/Qwen3-8B"
     },
     "gemma-4-E4B-it": {
-      "local": "/N/project/ai4chips/share_space/general_llm/google/gemma-4-E4B-it/models--google--gemma-4-E4B-it/snapshots/3555bddc93a623db8887dd2e52123facc45ade77",
+      "local": [
+        "/local_models/gemma-4-E4B-it",
+        "/N/project/ai4chips/share_space/general_llm/google/gemma-4-E4B-it/models--google--gemma-4-E4B-it/snapshots/3555bddc93a623db8887dd2e52123facc45ade77"
+      ],
       "hf": "google/gemma-4-E4B-it"
     },
     "llama3.1-8b": {
-      "local": "/N/project/ai4chips/share_space/general_llm/meta-llama/Llama-3.1-8B-Instruct/models--meta-llama--Llama-3.1-8B-Instruct/snapshots/0e9e39f249a16976918f6564b8830bc894c89659",
+      "local": [
+        "/local_models/Llama-3.1-8B-Instruct",
+        "/N/project/ai4chips/share_space/general_llm/meta-llama/Llama-3.1-8B-Instruct/models--meta-llama--Llama-3.1-8B-Instruct/snapshots/0e9e39f249a16976918f6564b8830bc894c89659"
+      ],
       "hf": "meta-llama/Llama-3.1-8B-Instruct"
     }
   },
   "CybersecurityLLM": {
     "Foundation-Sec-8B-Reasoning": {
-      "local": "/N/project/ai4chips/share_space/cyber_llms/Foundation_8b/Foundation-Sec-8B-Reasoning/models--fdtn-ai--Foundation-Sec-8B-Reasoning/snapshots/63c930c82d7646226d33502bec5870019738400e",
+      "local": [
+        "/local_models/Foundation-Sec-8B-Reasoning",
+        "/N/project/ai4chips/share_space/cyber_llms/Foundation_8b/Foundation-Sec-8B-Reasoning/models--fdtn-ai--Foundation-Sec-8B-Reasoning/snapshots/63c930c82d7646226d33502bec5870019738400e"
+      ],
       "hf": "fdtn-ai/Foundation-Sec-8B-Reasoning"
     },
     "RedSage-Qwen3-8B-DPO": {
-      "local": "/N/project/ai4chips/share_space/cyber_llms/RedSage/RedSage-Qwen3-8B-DPO/models--RISys-Lab--RedSage-Qwen3-8B-DPO/snapshots/04ec0b7738ede6717d86fa67993ade30c02dc79e",
+      "local": [
+        "/local_models/RedSage-Qwen3-8B-DPO",
+        "/N/project/ai4chips/share_space/cyber_llms/RedSage/RedSage-Qwen3-8B-DPO/models--RISys-Lab--RedSage-Qwen3-8B-DPO/snapshots/04ec0b7738ede6717d86fa67993ade30c02dc79e"
+      ],
       "hf": "RISys-Lab/RedSage-Qwen3-8B-DPO"
     },
     "WhiteRabbitNeo-2-8B": {
-      "local": "/N/project/ai4chips/share_space/cyber_llms/WhiteRabbitNeo/Llama-3.1-WhiteRabbitNeo-2-8B/models--WhiteRabbitNeo--Llama-3.1-WhiteRabbitNeo-2-8B/snapshots/df9a3dfd1ede1eee4d02c33b09440ad691fa9724",
+      "local": [
+        "/local_models/WhiteRabbitNeo-2-8B",
+        "/N/project/ai4chips/share_space/cyber_llms/WhiteRabbitNeo/Llama-3.1-WhiteRabbitNeo-2-8B/models--WhiteRabbitNeo--Llama-3.1-WhiteRabbitNeo-2-8B/snapshots/df9a3dfd1ede1eee4d02c33b09440ad691fa9724"
+      ],
       "hf": "WhiteRabbitNeo/Llama-3.1-WhiteRabbitNeo-2-8B"
     }
   }

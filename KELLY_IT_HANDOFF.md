@@ -34,13 +34,15 @@ pulled from HuggingFace.
     ├── pl_hcl/pl_hcl_v2/                      # Stage 2 (HCL) — challenge-scrubbed
     │   ├── stage1/pairs_{train,val,test,unseen}.parquet    # JOINED pair files
     │   └── stage2/pairs_{train,val,test,unseen}.parquet
-    └── sft/                                   # Stage 3 (SFT)
-        ├── sft_v2/                            #   description-matching, scrubbed
-        │   ├── classifier_{train,val,test}.parquet
-        │   └── sft_{train,val,test}.jsonl
-        └── challenge/                         #   gold-label misalignment eval set
-            ├── classifier_test.parquet         #   EVAL-ONLY (all 1,444 rows in one file)
-            └── sft_test.jsonl                  #   EVAL-ONLY (chat-format alternative)
+    └── sft/                                   # Stage 3 (SFT) — per-task layout
+        ├── sft_mal/                           #   malicious-detection task
+        │   ├── mal_{train,val,test}.parquet   #     label = overall_class (safe/malicious)
+        │   ├── manifest.json                  #     schema + sha256 + source provenance
+        │   └── stats.json                     #     per-split label distribution + char counts
+        └── sft_align/                         #   misalignment-detection task
+            ├── align_{train,val,test}.parquet #     label = alignment_class (ALIGNED/MISALIGNED)
+            ├── manifest.json
+            └── stats.json
 ```
 
 > **HCL path note**: `stages/hcl/data.py` needs `anchor_text` + `pair_text` +
@@ -76,11 +78,29 @@ AGENTSKILLS_MODELS_HOST=/opt/agentskills/hf_cache       # OPTIONAL; defaults to 
 
 ---
 
-## 3. Build + warm the HF cache (one-time)
+## 3. Get the image (two options)
+
+### Option A — Load the prebuilt image (fastest, no build needed)
+
+A prebuilt `agent-skills-training:latest` is shared as a 7.1 GB gzipped tarball:
+
+```bash
+# After downloading the tarball:
+sha256sum agent-skills-training_2026-05-16.tar.gz   # verify against the .sha256 file
+docker load -i agent-skills-training_2026-05-16.tar.gz
+docker images agent-skills-training                  # should show :latest
+```
+
+### Option B — Build from source
 
 ```bash
 cd /opt/agentskills/agent-skills-training
 docker compose build pretraining     # ~10 min, ~12 GB image
+```
+
+### Warm the HF cache (one-time, either option)
+
+```bash
 docker compose run --rm --no-deps --entrypoint python pretraining \
     -m common.prefetch_models        # ~20 min on a fast link; one-time
 ```
@@ -97,6 +117,35 @@ docker compose run --rm --no-deps --entrypoint python pretraining \
 ---
 
 ## 4. Quick smoke (verify everything works in ~5 min)
+
+The recommended way is the one-liner that runs **all five stages** end-to-end
+(CPT → HCL → SFT misalignment → inference → eval_baseline) with smoke caps
+and prints a pass/fail summary at the end. No need to remember individual
+overrides:
+
+```bash
+bash scripts/run_pipeline_smoke_docker.sh                       # default backbone: Foundation-Sec-8B-Reasoning
+bash scripts/run_pipeline_smoke_docker.sh llama3.1-8b           # or any model from model_path.json
+```
+
+Expected output on success (~5 min on a single A100 40 GB):
+
+```
+[pipe] SUMMARY  model=llama3.1-8b
+  1_cpt              PASS
+  2_hcl              PASS
+  3_sft_align        PASS
+  4_inference        PASS
+  5_eval_baseline    PASS
+```
+
+If any step fails, the summary lists `FAIL(exit=N)` against that step and
+the script exits non-zero. Per-step logs live under
+`outputs/runs/<MODEL>/<step_run_name>/train.log`. The script is **idempotent**
+— rerunning skips steps whose marker file already exists, so you can fix
+one failure and just rerun.
+
+Per-stage manual smoke commands (only if you need to bisect a failing step):
 
 ```bash
 # Stage 1 — CPT
@@ -118,7 +167,7 @@ docker compose run --rm hcl \
     data.max_train_rows=64 data.max_validation_rows=16 data.max_test_rows=16 \
     data.max_seq_length=512
 
-# Stage 3 — SFT
+# Stage 3 — SFT misalignment
 docker compose run --rm sft-align \
     stages/downstream/sft/train.py \
     --config stages/downstream/configs/sft_misalignment_example.yaml \
@@ -127,15 +176,9 @@ docker compose run --rm sft-align \
     data.max_seq_length=512
 ```
 
-Expected timings on an A100 40 GB at the smoke caps above:
-
-| Stage | Wall time | Notes |
-|---|---|---|
-| 1 (CPT)        | ~15 s   | 4 steps + final eval/test |
-| 2 (HCL)        | ~10 s   | Phase 1 LoRA merge + 4 contrastive steps |
-| 3 (SFT)        | ~3 min  | Dominated by the start-/end-of-training full evals (see §7 known issues) |
-
-If all three exit 0 and write a `final_model/` directory, the host is good.
+Validated on Jetstream A100 40 GB (2026-05-16) end-to-end for both
+`Foundation-Sec-8B-Reasoning` and `llama3.1-8b` — all 5/5 steps PASS,
+total wall ~5 min per backbone.
 
 ### 4a. Full-pipeline Slurm smoke (Quartz / BR200, no Docker)
 
@@ -173,11 +216,12 @@ What the full-pipeline smoke does (defaults under `scripts/run_pipeline_smoke.sh
    isn't dominated by the natural 88%-negative skew of the pair file.
    `ce_loss_weight=0.5` so the contrastive head moves past random init.
    Emits a per-pair_kind breakdown — see "HCL breakdown" below.
-3. **Stage 3 — SFT misalignment**, trained on `sft/sft_v2/classifier_*.parquet`
-   (broad scanner-labeled set), chained on Stage 1's LoRA.
-   `sft/challenge/` is **eval-only** — never an SFT training source.
-4. **Stage 3 — Inference** on `sft/challenge/classifier_test.parquet`
-   (gold-label set) using the SFT-misalignment adapter from step 3.
+3. **Stage 3 — SFT misalignment**, trained on `sft/sft_align/align_*.parquet`
+   (label = `alignment_class`), chained on Stage 1's LoRA. The parallel
+   `sft/sft_mal/mal_*.parquet` (label = `overall_class`) is used by the
+   `sft-mal` service when you want to train the malicious-detection task.
+4. **Stage 3 — Inference** on `sft/sft_align/align_test.parquet` using
+   the SFT-misalignment adapter from step 3.
 5. **Stage 3 — eval_baseline** intrinsic CLM perplexity on
    `full_cpt/full_cpt_v3/stage1/test.parquet`.
 

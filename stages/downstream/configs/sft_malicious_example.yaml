@@ -25,9 +25,9 @@ data:
   #   - skill_text       (or whatever task.input_column says)
   #   - overall_class    (the maliciousness verdict from scanning or
   #                       human-reviewed labels)
-  train_file:      "${AGENTSKILLS_SFT_MAL_TRAIN:-./inputs/sft/malicious/train.parquet}"
-  validation_file: "${AGENTSKILLS_SFT_MAL_VAL:-./inputs/sft/malicious/val.parquet}"
-  test_file:       "${AGENTSKILLS_SFT_MAL_TEST:-./inputs/sft/malicious/test.parquet}"
+  train_file:      "${AGENTSKILLS_SFT_MAL_TRAIN:-/data/sft/sft_mal/mal_train.parquet}"
+  validation_file: "${AGENTSKILLS_SFT_MAL_VAL:-/data/sft/sft_mal/mal_val.parquet}"
+  test_file:       "${AGENTSKILLS_SFT_MAL_TEST:-/data/sft/sft_mal/mal_test.parquet}"
   max_seq_length: 2048
   preprocessing_num_workers: 4
   balance_by_label: true        # 50/50 pos/neg downsample (recommended on small mal sets)

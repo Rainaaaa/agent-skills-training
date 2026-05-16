@@ -20,9 +20,9 @@ data:
   #   - skill_text         (or whatever task.input_column says)
   #   - alignment_class    (the ALIGNED / MISALIGNED label from scanning
   #                         or human-reviewed labels)
-  train_file:      "${AGENTSKILLS_SFT_ALIGN_TRAIN:-./inputs/sft/alignment/train.parquet}"
-  validation_file: "${AGENTSKILLS_SFT_ALIGN_VAL:-./inputs/sft/alignment/val.parquet}"
-  test_file:       "${AGENTSKILLS_SFT_ALIGN_TEST:-./inputs/sft/alignment/test.parquet}"
+  train_file:      "${AGENTSKILLS_SFT_ALIGN_TRAIN:-/data/sft/sft_align/align_train.parquet}"
+  validation_file: "${AGENTSKILLS_SFT_ALIGN_VAL:-/data/sft/sft_align/align_val.parquet}"
+  test_file:       "${AGENTSKILLS_SFT_ALIGN_TEST:-/data/sft/sft_align/align_test.parquet}"
   max_seq_length: 2048
   preprocessing_num_workers: 4
   balance_by_label: true

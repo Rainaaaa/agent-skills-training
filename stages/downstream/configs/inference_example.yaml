@@ -12,7 +12,7 @@ run:
 
 data:
   task: malicious_detection
-  test_file: "${AGENTSKILLS_INFER_TEST:-./inputs/sft/malicious/test.parquet}"
+  test_file: "${AGENTSKILLS_INFER_TEST:-/data/sft/sft_align/align_test.parquet}"
   max_rows: 200       # smoke-test cap; 0 = all rows
 
 model:
