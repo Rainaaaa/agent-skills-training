@@ -31,13 +31,13 @@ tokenizers>=0.22,<0.23
 # TensorBoard for trainer.report_to
 tensorboard>=2.20,<3
 
-# PyTorch — the AgentSkillsOSS env runs torch 2.6.0+cu124. The current
-# Dockerfile uses `pytorch/pytorch:2.3.0-cuda12.1-cudnn8-runtime` which
-# pre-installs torch 2.3.0 — that does NOT satisfy this lower bound, and
-# transformers >= 4.45 will fail at import on multi-GPU because the
-# tensor-parallel code path needs APIs only present in torch 2.4+.
-# Update the Dockerfile FROM to a matching base, e.g.:
-#   FROM pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime
+# PyTorch — the AgentSkillsOSS env runs torch 2.6.0+cu124. The Dockerfile
+# uses `pytorch/pytorch:2.6.0-cuda12.4-cudnn9-devel` to match. We pick the
+# -devel variant (not -runtime) because torch 2.6 uses Triton to JIT GPU
+# kernels at training-step time, and Triton needs both a C compiler and
+# nvcc — neither of which ships in pytorch/pytorch:*-runtime images.
+# Symptom if you regress to -runtime: "Failed to find C compiler. Please
+# specify via CC environment variable." from Triton mid-training.
 # This pin is a NO-OP inside the image (torch pre-installed) but enforces
 # the floor for local installs (`pip install -r requirements.txt`).
 torch>=2.6,<3
@@ -48,13 +48,13 @@ torch>=2.6,<3
 # common/modeling.py — only paid for when a config requests quantization.
 bitsandbytes>=0.48,<0.50
 
-# flash-attention 2 — INTENTIONALLY commented. flash-attn ships only as a
-# source distribution and requires nvcc + a CUDA toolkit at install time
-# (the pytorch/pytorch:*-runtime base images do NOT ship nvcc, only
-# pytorch/pytorch:*-devel does). Either:
-#   (a) swap the Dockerfile base to a -devel image and uncomment, OR
+# flash-attention 2 — INTENTIONALLY commented. The Dockerfile base now ships
+# nvcc + the CUDA toolkit (-devel variant), so a source build would work,
+# but the compile takes ~15 min and roughly doubles image size. Configs
+# default to attn_implementation=sdpa, which is correct without this package
+# (~25% slower on 8B-class models). To enable for real training, either:
+#   (a) uncomment the pin below and accept the build cost, OR
 #   (b) install a prebuilt wheel matching your torch + cu version from
 #       https://github.com/Dao-AILab/flash-attention/releases
-# Configs default to attn_implementation=sdpa, which works without this
-# package. AgentSkillsOSS env has flash_attn 2.7.4.post1 installed locally.
+# AgentSkillsOSS env on Quartz has flash_attn 2.7.4.post1 installed locally.
 # flash-attn>=2.7,<3

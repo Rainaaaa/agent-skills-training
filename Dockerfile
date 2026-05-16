@@ -29,7 +29,7 @@
 #         stages/pretraining/train.py \
 #             --config stages/pretraining/configs/example.yaml
 
-FROM pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime
+FROM pytorch/pytorch:2.6.0-cuda12.4-cudnn9-devel
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
