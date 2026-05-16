@@ -1,37 +1,60 @@
 # agent-skills-training runtime deps.
 #
-# Versions pinned to a known-good window that matches the BR200 IU cluster
-# (CUDA 12.x driver, PyTorch 2.1+). Adjust if your GPU host has a different
-# CUDA. For pure inference, omit `bitsandbytes` (it's heavy and unnecessary
-# without 4/8-bit quantization).
+# Versions pinned to match the AgentSkillsOSS conda env on Quartz, which is
+# the canonical env used by scripts/run_smoke.sh and run_pipeline_smoke.sh.
+# Last validated 2026-05-16 against torch 2.6.0+cu124.
+#
+# Rationale for tight pins: the previous loose ranges (e.g. transformers
+# >=4.40,<4.60) let pip resolve to whatever was latest at image-build time,
+# which produced silent skew between hosts — most visibly the
+# `EmbeddingParallel` ImportError on multi-rank torchrun, caused by a newer
+# transformers expecting torch.distributed.tensor APIs that don't exist in
+# torch 2.3.x. Narrow ranges below match what actually runs end-to-end.
+#
+# If you change a pin, run scripts/run_pipeline_smoke.sh to revalidate.
 
 # Core
 PyYAML>=6.0,<7
-pyarrow>=14.0,<22
+pyarrow>=19.0,<20
 
-# HF stack
-transformers>=4.40,<4.60
-datasets>=2.18,<4
-accelerate>=0.30,<2
-peft>=0.10,<1
+# HF stack — tight ranges (minor-pinned). Bumping any of these requires a
+# matching torch upgrade; transformers 4.57.x specifically needs torch >= 2.4
+# for the tensor-parallel hook path that multi-GPU training hits.
+transformers>=4.57,<4.58
+datasets>=3.3,<3.4
+accelerate>=1.5,<1.6
+peft>=0.18,<0.19
 sentencepiece>=0.2,<1
-safetensors>=0.4,<1
-tokenizers>=0.19,<1
+safetensors>=0.5,<0.6
+tokenizers>=0.22,<0.23
 
 # TensorBoard for trainer.report_to
-tensorboard>=2.16,<3
+tensorboard>=2.20,<3
 
-# PyTorch — pin via the CUDA-matched wheel index; the Dockerfile uses the
-# `pytorch/pytorch:2.3.0-cuda12.1-cudnn8-runtime` base which ships torch
-# pre-installed, so this line is a NO-OP inside the image. Listed for
-# local installs (`pip install -r requirements.txt`).
-# torch>=2.1,<3
+# PyTorch — the AgentSkillsOSS env runs torch 2.6.0+cu124. The current
+# Dockerfile uses `pytorch/pytorch:2.3.0-cuda12.1-cudnn8-runtime` which
+# pre-installs torch 2.3.0 — that does NOT satisfy this lower bound, and
+# transformers >= 4.45 will fail at import on multi-GPU because the
+# tensor-parallel code path needs APIs only present in torch 2.4+.
+# Update the Dockerfile FROM to a matching base, e.g.:
+#   FROM pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime
+# This pin is a NO-OP inside the image (torch pre-installed) but enforces
+# the floor for local installs (`pip install -r requirements.txt`).
+torch>=2.6,<3
 
 # 4-bit / 8-bit base-weight quantization. Required by production CPT configs
 # (e.g. full_cpt_v1_quarter.yaml sets model.quantization.load_in_8bit=true)
 # so 8B-class backbones fit comfortably on 24-40 GB GPUs. Lazy-imported by
 # common/modeling.py — only paid for when a config requests quantization.
-bitsandbytes>=0.43,<0.45
+bitsandbytes>=0.48,<0.50
 
-# flash-attention 2 (rebuild against your CUDA)
-flash-attn>=2.5,<3
+# flash-attention 2 — INTENTIONALLY commented. flash-attn ships only as a
+# source distribution and requires nvcc + a CUDA toolkit at install time
+# (the pytorch/pytorch:*-runtime base images do NOT ship nvcc, only
+# pytorch/pytorch:*-devel does). Either:
+#   (a) swap the Dockerfile base to a -devel image and uncomment, OR
+#   (b) install a prebuilt wheel matching your torch + cu version from
+#       https://github.com/Dao-AILab/flash-attention/releases
+# Configs default to attn_implementation=sdpa, which works without this
+# package. AgentSkillsOSS env has flash_attn 2.7.4.post1 installed locally.
+# flash-attn>=2.7,<3
