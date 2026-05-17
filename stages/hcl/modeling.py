@@ -59,6 +59,12 @@ class HclPairModel(nn.Module):
         the loss uses them)
     """
 
+    # HF Trainer's _issue_warnings_after_load (resume path) reads this attr
+    # directly. PreTrainedModel defines it at the class level; an nn.Module
+    # wrapper has to too, or Module.__getattr__ raises AttributeError on
+    # resume_from_checkpoint.
+    _keys_to_ignore_on_save = None
+
     def __init__(
         self,
         backbone: PreTrainedModel,
