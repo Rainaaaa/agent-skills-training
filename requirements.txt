@@ -57,4 +57,4 @@ bitsandbytes>=0.48,<0.50
 #   (b) install a prebuilt wheel matching your torch + cu version from
 #       https://github.com/Dao-AILab/flash-attention/releases
 # AgentSkillsOSS env on Quartz has flash_attn 2.7.4.post1 installed locally.
-# flash-attn>=2.7,<3
+flash-attn==2.7.4.post1
