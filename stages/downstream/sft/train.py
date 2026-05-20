@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import torch
+from peft import PeftModel
 from transformers import Trainer, set_seed
 from transformers.data.data_collator import DataCollatorForLanguageModeling
 
@@ -68,6 +69,37 @@ def _derive_output_dir(run_cfg: Dict[str, Any], model_name: Optional[str], task_
     return (Path(output_root).expanduser()
             / sanitize_for_path(model_name)
             / f"sft_{task_name}__{run_name}").resolve()
+
+
+def _load_and_merge_phase_adapter(model, model_cfg: Dict[str, Any], key: str):
+    """Load a prior-stage LoRA adapter from model_cfg[key] and merge it.
+
+    Mirrors stages/hcl/modeling.load_phase1_adapter_if_any. Used to chain SFT
+    on top of CPT (phase1) and/or HCL (phase2) adapters: each named adapter
+    is loaded in eval mode and folded into the base via merge_and_unload, so
+    the fresh SFT LoRA wraps cleanly on top of the merged weights.
+
+    Returns the model unchanged when the config value is empty/missing.
+    """
+    adapter_path = model_cfg.get(key)
+    if not adapter_path:
+        return model
+    adapter_path = str(Path(adapter_path).expanduser().resolve())
+    if not Path(adapter_path).exists():
+        raise FileNotFoundError(f"{key} not found: {adapter_path}")
+    quantized = bool(getattr(model, "is_loaded_in_4bit", False)) or bool(
+        getattr(model, "is_loaded_in_8bit", False)
+    )
+    if quantized:
+        raise ValueError(
+            f"Cannot merge {key} into a quantized base — merge_and_unload "
+            "requires unquantized weights. Drop model.quantization or omit "
+            f"{key}."
+        )
+    LOGGER.info("Loading %s from %s", key, adapter_path)
+    merged = PeftModel.from_pretrained(model, adapter_path, is_trainable=False)
+    LOGGER.info("Merging %s into base weights (merge_and_unload)", key)
+    return merged.merge_and_unload()
 
 
 class _DropDataCollator:
@@ -122,6 +154,10 @@ def main() -> None:
 
     tokenizer, num_added = load_tokenizer(model_cfg)
     model = load_causal_lm(model_cfg, num_added)
+    # Chain on prior-stage adapters before applying the fresh SFT LoRA, so SFT
+    # can train on top of {raw base, CPT-merged base, HCL-merged base}.
+    model = _load_and_merge_phase_adapter(model, model_cfg, "phase1_adapter_path")
+    model = _load_and_merge_phase_adapter(model, model_cfg, "phase2_adapter_path")
     model = maybe_wrap_lora(model, model_cfg)
 
     ds = load_splits(data_cfg)
