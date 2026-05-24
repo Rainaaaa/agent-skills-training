@@ -77,35 +77,50 @@ echo "[chain] cpt_adapter=${CPT_ADAPTER}"
 echo "[chain] sub-stage 1 out=${S1_OUT_DIR}"
 
 # ----- sub-stage 1 (1 GPU, seq=4096, chained on CPT sub-stage 2) -----
-SUB1_JOBID="$(sbatch --parsable \
-    -p "${PARTITION}" "${QOS_FLAG[@]}" \
-    --gres=gpu:1 --mem=96G --cpus-per-task=16 \
-    -J "hcl_substage1_${MODEL}" \
-    "${LAUNCHER}" "${CONFIG}" \
-        "model.name=${MODEL}" \
-        "model.phase1_adapter_path=${CPT_ADAPTER}" \
-        "run.output_root=${OUT_ROOT}" \
-        "run.run_name=${S1_RUN_NAME}" \
-        "data.train_file=${S1_DIR}/pairs_train.parquet" \
-        "data.validation_file=${S1_DIR}/pairs_val.parquet" \
-        "data.test_file=${S1_DIR}/pairs_test.parquet" \
-        "data.max_seq_length=4096" \
-        "training.per_device_train_batch_size=1" \
-        "training.gradient_accumulation_steps=8")"
-echo "[chain] submitted sub-stage 1: jobid=${SUB1_JOBID}"
+# Skip-on-rerun: if sub-stage 1's final_model is already on disk, treat it
+# as DONE and submit only sub-stage 2 (with no Slurm dependency).
+DEP_FLAG=()
+if [[ -d "${S1_OUT_DIR}/final_model" ]]; then
+  echo "[chain] sub-stage 1 already complete (found ${S1_OUT_DIR}/final_model) — skipping submission"
+  SUB1_JOBID="(done)"
+else
+  SUB1_JOBID="$(sbatch --parsable \
+      -p "${PARTITION}" "${QOS_FLAG[@]}" \
+      --gres=gpu:1 --mem=96G --cpus-per-task=16 \
+      -J "hcl_substage1_${MODEL}" \
+      "${LAUNCHER}" "${CONFIG}" \
+          "model.name=${MODEL}" \
+          "model.phase1_adapter_path=${CPT_ADAPTER}" \
+          "run.output_root=${OUT_ROOT}" \
+          "run.run_name=${S1_RUN_NAME}" \
+          "data.train_file=${S1_DIR}/pairs_train.parquet" \
+          "data.validation_file=${S1_DIR}/pairs_val.parquet" \
+          "data.test_file=${S1_DIR}/pairs_test.parquet" \
+          "data.max_seq_length=4096" \
+          "training.per_device_train_batch_size=1" \
+          "training.gradient_accumulation_steps=8")"
+  DEP_FLAG=(--dependency="afterok:${SUB1_JOBID}")
+  echo "[chain] submitted sub-stage 1: jobid=${SUB1_JOBID}"
+fi
 
 # ----- sub-stage 2 (2 GPUs, seq=10240, resumes from sub-stage 1) -----
-# Note: NO phase1_adapter_path here — the CPT adapter is already merged
-# in the saved sub-stage-1 backbone, and the resumed checkpoint carries
-# the fresh Phase 2 LoRA.
+# IMPORTANT: phase1_adapter_path MUST be passed again here.
+# HclTrainer._save writes only trainable params (Phase 2 LoRA + hcl_head.pt)
+# — NOT the merged base. On resume the model is reconstructed via:
+#   base -> load+merge phase1 adapter -> attach fresh Phase 2 LoRA
+# and only then the checkpoint's pytorch_model.bin (trainable-only) is
+# loaded. Skip phase1_adapter_path and the YAML's
+# ${AGENTSKILLS_PHASE1_ADAPTER:-./outputs/phase1/final_model} default
+# kicks in -> FileNotFoundError at model build.
 SUB2_JOBID="$(sbatch --parsable \
-    --dependency="afterok:${SUB1_JOBID}" \
+    "${DEP_FLAG[@]}" \
     --export="ALL,RESUME_PARENT_DIR=${S1_OUT_DIR}" \
     -p "${PARTITION}" "${QOS_FLAG[@]}" \
     --gres=gpu:2 --mem=192G --cpus-per-task=32 \
     -J "hcl_substage2_${MODEL}" \
     "${LAUNCHER}" "${CONFIG}" \
         "model.name=${MODEL}" \
+        "model.phase1_adapter_path=${CPT_ADAPTER}" \
         "run.output_root=${OUT_ROOT}" \
         "run.run_name=${S2_RUN_NAME}" \
         "data.train_file=${S2_DIR}/pairs_train.parquet" \
@@ -115,7 +130,7 @@ SUB2_JOBID="$(sbatch --parsable \
         "training.per_device_train_batch_size=1" \
         "training.gradient_accumulation_steps=4" \
         "training.lr_scheduler_type=constant")"
-echo "[chain] submitted sub-stage 2: jobid=${SUB2_JOBID}  (afterok:${SUB1_JOBID})"
+echo "[chain] submitted sub-stage 2: jobid=${SUB2_JOBID}  ${DEP_FLAG[*]:-(no dependency)}"
 
 cat <<EOF
 

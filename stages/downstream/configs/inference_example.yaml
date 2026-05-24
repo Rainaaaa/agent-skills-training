@@ -14,6 +14,11 @@ data:
   task: malicious_detection
   test_file: "${AGENTSKILLS_INFER_TEST:-/data/sft/sft_align/align_test.parquet}"
   max_rows: 200       # smoke-test cap; 0 = all rows
+  # Few-shot exemplar source. If `inference.n_shot > 0` and this is unset,
+  # exemplars are sampled from `data.train_file` if present, otherwise the
+  # run errors out. Should be a parquet/jsonl with the same schema as the
+  # test_file (skill_text + alignment_class / overall_class).
+  exemplar_file: "${AGENTSKILLS_FEWSHOT_EXEMPLARS:-/data/sft/sft_align/align_train.parquet}"
 
 model:
   name: "${AGENTSKILLS_BACKBONE:-Foundation-Sec-8B-Reasoning}"
@@ -32,6 +37,13 @@ inference:
   # picks argmax (recommended for one-word answers — no decoder noise).
   # false uses free-form greedy generation and substring-matches the output.
   constrain_vocab: true
+  # Few-shot prefix length. 0 = zero-shot (original behavior; no exemplars).
+  # >0 = sample n_shot exemplars from `data.exemplar_file` (balanced ~50/50
+  # by task.response_for label), render them as `<prompt> <response>` blocks
+  # joined with blank lines, and prepend before the test row. The task's
+  # system_prompt appears once at the top, NOT per exemplar.
+  n_shot: 0
+  exemplar_seed: 42          # reproducibility — same exemplars across runs
 
 output:
   predictions_jsonl: "${AGENTSKILLS_INFER_PREDS:-}"   # default: <output_dir>/predictions_<task>.jsonl

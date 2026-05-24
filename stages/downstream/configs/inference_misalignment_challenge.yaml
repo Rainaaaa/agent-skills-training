@@ -3,7 +3,7 @@
 #  agent-skills-preparation/pipeline/build_sft_challenge.py).
 #
 # Dataset:
-#   /data/sft/challenge/classifier_test.parquet
+#   /data/sft/sft_align_challenge/align_challenge_test.parquet
 # Schema:
 #   skill_text       (str) — rendered SKILL package contents
 #   alignment_class  (str) — "ALIGNED" or "MISALIGNED"  (gold)
@@ -11,8 +11,8 @@
 # prompt template, constrained-decodes to {"aligned","misaligned"}, and
 # scores against `alignment_class`.
 #
-# Use this AFTER training on sft_v2 to evaluate the SFT-trained adapter on
-# the gold human-reviewed corpus.
+# Use this AFTER training on sft_align to evaluate the SFT-trained adapter
+# on the gold human-reviewed corpus.
 
 run:
   output_root: "${AGENTSKILLS_TRAIN_OUTPUT_ROOT:-./outputs/runs}"
@@ -21,12 +21,12 @@ run:
 
 data:
   task: misalignment_detection
-  test_file: "${AGENTSKILLS_SFT_CHALLENGE_TEST:-/data/sft/challenge/classifier_test.parquet}"
+  test_file: "${AGENTSKILLS_SFT_CHALLENGE_TEST:-/data/sft/sft_align_challenge/align_challenge_test.parquet}"
   max_rows: 0       # 0 = use all 1,444 rows
 
 model:
   name: "${AGENTSKILLS_BACKBONE:-Foundation-Sec-8B-Reasoning}"
-  # Required: the SFT-trained adapter from sft_v2 training. Leave empty to
+  # Required: the SFT-trained adapter from sft_align training. Leave empty to
   # baseline-score the raw backbone (expect near-chance F1).
   adapter_path: "${AGENTSKILLS_SFT_ADAPTER:-}"
   tokenizer_name_or_path: null

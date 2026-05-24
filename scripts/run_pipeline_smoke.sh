@@ -17,8 +17,8 @@
 #
 #   1. Stage 1 — CPT pretraining (full_cpt_v3/stage1)
 #   2. Stage 2 — HCL contrastive  (pl_hcl_v2/stage1/pairs_*),  chained on Stage 1 LoRA
-#   3. Stage 3 — SFT misalignment (sft/sft_v2/classifier_*),   chained on Stage 1 LoRA
-#                — challenge/ is eval-only, never an SFT training source.
+#   3. Stage 3 — SFT misalignment (sft/sft_align/align_*),     chained on Stage 1 LoRA
+#                — sft_align_challenge/ is eval-only, never an SFT training source.
 #   4. Stage 3 — Inference on the gold-label challenge test set, using the
 #                SFT-misalignment adapter from step 3.
 #   5. Stage 3 — eval_baseline (CLM perplexity on full_cpt_v3/stage1/test.parquet)
@@ -44,8 +44,8 @@ DATA_ROOT=/N/project/AdversarialModeling/datasets/agent_skills/misalignment
 
 CPT_DIR="${DATA_ROOT}/full_cpt/full_cpt_v3/stage1"
 HCL_DIR="${DATA_ROOT}/pl_hcl/pl_hcl_v2/stage1"
-SFT_TRAIN_DIR="${DATA_ROOT}/sft/sft_v2"           # broad scanner-labeled set, for SFT training
-SFT_EVAL_DIR="${DATA_ROOT}/sft/challenge"         # gold-label challenge set, eval-only
+SFT_TRAIN_DIR="${DATA_ROOT}/sft/sft_align"           # broad scanner-labeled set, for SFT training
+SFT_EVAL_DIR="${DATA_ROOT}/sft/sft_align_challenge"   # gold-label challenge set, eval-only
 
 mkdir -p "${REPO_ROOT}/log" "${REPO_ROOT}/outputs/runs"
 
@@ -180,9 +180,9 @@ if [[ -d "${CPT_ADAPTER}" ]]; then
       run.output_root="${OUT_ROOT}" \
       run.run_name="${SFT_RUN}" \
       "model.phase1_adapter_path=${CPT_ADAPTER}" \
-      "data.train_file=${SFT_TRAIN_DIR}/classifier_train.parquet" \
-      "data.validation_file=${SFT_TRAIN_DIR}/classifier_val.parquet" \
-      "data.test_file=${SFT_TRAIN_DIR}/classifier_test.parquet" \
+      "data.train_file=${SFT_TRAIN_DIR}/align_train.parquet" \
+      "data.validation_file=${SFT_TRAIN_DIR}/align_val.parquet" \
+      "data.test_file=${SFT_TRAIN_DIR}/align_test.parquet" \
       training.max_steps=4 \
       data.max_seq_length=512
 else
@@ -202,7 +202,7 @@ if [[ -d "${SFT_ALIGN_ADAPTER}" ]]; then
       run.run_name="${INF_RUN}" \
       "model.adapter_path=${SFT_ALIGN_ADAPTER}" \
       data.task=misalignment_detection \
-      "data.test_file=${SFT_EVAL_DIR}/classifier_test.parquet" \
+      "data.test_file=${SFT_EVAL_DIR}/align_challenge_test.parquet" \
       data.max_rows=8
 else
   echo "[pipe] SKIP step 4 — SFT-align adapter missing"

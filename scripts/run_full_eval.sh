@@ -83,10 +83,12 @@ NAME_SFT_MAL="sft_malicious"
 NAME_EVAL_SFT_ALIGN="eval_sft_misalignment"
 NAME_EVAL_SFT_MAL="eval_sft_malicious"
 
-# Data paths inside the container (challenge-scrubbed v3 / v2 layout).
+# Data paths inside the container (challenge-scrubbed v3 layout + sft_align*/sft_mal split).
+#   sft_align_challenge/ : gold-label human-reviewed eval set (misalignment)
+#   sft_mal/             : malicious-detection corpus (train + val + test)
 CPT_DATA_DIR=/data/full_cpt/full_cpt_v3/stage1
-ALIGN_TEST=/data/sft/challenge/classifier_test.parquet
-MAL_TEST=/data/sft/sft_v2/classifier_test.parquet
+ALIGN_TEST=/data/sft/sft_align_challenge/align_challenge_test.parquet
+MAL_TEST=/data/sft/sft_mal/mal_test.parquet
 
 host_dir() { echo "$AGENTSKILLS_OUTPUTS_HOST/runs/$1/$2"; }
 in_dir()   { echo "/app/outputs/runs/$1/$2"; }
